@@ -1,0 +1,48 @@
+{
+  "name": "cr-crud-extension",
+  "displayName": "cr-crud-extension",
+  "description": "creates CRUD support for a given route",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mbanem/cr-crud-extension.git"
+  },
+  "license": "MIT",
+  "publisher": "mbanem",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cr-crud-extension.createCrudSupport",
+        "title": "Create CRUD Support"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "pnpm run compile && pnpm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test",
+    "pak": "tsc -p ./;  vsce package --no-dependencies; VERSION=$(jq -r '.version' /home/mili/TEST/cr-crud-extension/package.json); code --install-extension /home/mili/TEST/cr-crud-extension/cr-crud-extension-${VERSION}.vsix;"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.105.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@typescript-eslint/eslint-plugin": "^8.31.1",
+    "@typescript-eslint/parser": "^8.31.1",
+    "eslint": "^9.25.1",
+    "typescript": "^5.8.3",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}
