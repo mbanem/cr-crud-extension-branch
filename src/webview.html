@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <style>
+    .main-grid {
+      display: grid;
+      grid-template-columns: 33rem 20rem;
+    }
+
+    .grid-wrapper {
+      display: grid;
+      grid-template-columns: 20rem 12rem;
+      column-gap: 0.5rem;
+      row-gap: 1rem;
+    }
+
+
+    .span-two,
+    pre {
+      grid-column: 1 / span 2;
+      text-align: justify;
+      font-size: 12px;
+      color: skyblue;
+    }
+
+
+    #createBtnId {
+      width: 12rem;
+      padding: 4px 0;
+      margin: 2rem 0 0 0;
+      padding: 5px 0;
+      opacity: 0.8;
+    }
+
+    #createBtnId:hover {
+      opacity: 1;
+    }
+
+    input[type='text'] {
+      width: 18rem;
+      height: 20px;
+      padding: 6px 0 8px 1rem;
+      outline: none;
+      font-size: 16px;
+      border: 1px solid gray;
+      border-radius: 4px;
+      outline: 1px solid transparent;
+      margin-top: 8px;
+      margin-bottom: 10px;
+    }
+
+    input[type='text']:focus {
+      outline: 1px solid gray;
+    }
+
+    .left-column {
+      grid-column: 1;
+    }
+
+    .left-column label,
+    .left-column label:focus {
+      display: block;
+      width: 12rem;
+      cursor: pointer;
+
+    }
+
+    .fields-list {
+      position: relative;
+      cursor: pointer;
+    }
+
+    .middle-column {
+      position: relative;
+      grid-column: 2;
+      border: 1px solid gray;
+      border-radius: 5px;
+      margin-top: 1.45rem;
+    }
+
+    .middle-column .candidate-fields-caption {
+      position: absolute;
+      top: -1.5rem;
+      left: 0.5rem;
+      color: skyblue;
+    }
+
+    .right-column {
+      position: relative;
+      border: 1px solid gray;
+      border-radius: 6px;
+      padding: 6px 3px 8px 10px;
+      margin-top: 1.5rem;
+
+    }
+
+    #schemaContainerId {
+      height: 30rem;
+      overflow-y: auto;
+    }
+
+    .right-column .prisma-model-caption {
+      position: absolute;
+      top: -1.5rem;
+      left: 0.5rem;
+      display: inline-block;
+      color: skyblue;
+      cursor: pointer;
+    }
+
+    .collapse-all {
+      color: lightgreen;
+      font-size: 12px;
+      border: 1px solid gray;
+      border-radius: 4px;
+      padding: 2px 0 2px 1rem;
+    }
+
+    .embellishments {
+      position: relative;
+      grid-column: span 2;
+      display: grid;
+      grid-template-columns: 1rem 20rem;
+
+      column-gap: 0.5rem;
+      row-gap: 0.1rem;
+      align-items: center;
+      padding: 8px 1rem;
+      border: 1px solid gray;
+      border-radius: 6px;
+      margin-top: 3rem;
+      user-select: none;
+    }
+
+    .checkbox-item {
+      display: contents;
+    }
+
+    .checkbox-item input[type='checkbox'] {
+      grid-column: 1;
+      justify-self: start;
+      align-self: center;
+      margin: 0;
+    }
+
+    .checkbox-item label {
+      grid-column: 2;
+      justify-self: start;
+      align-self: center;
+      cursor: pointer;
+      line-height: 1;
+      width: 25rem !important;
+    }
+
+    .checkbox-item label:hover {
+      background-color: cornsilk;
+      cursor: pointer;
+      width: 25rem !important;
+    }
+
+    /* for CSS class names inserted as a markup string into innerHTML
+      class the names should be defined :global as they are in a new scope
+      but WebView CSP Restrictions: VS Code WebViews have strict CSP
+      and pseudo classes do not work, though they work in Svelte
+    */
+    .list-el {
+      background-color: skyblue;
+      width: max-100%;
+      height: 20px;
+      font-size: 18px;
+      line-height: 18px;
+      text-align: center;
+      margin: 6px 0 0 0;
+    }
+
+    .list-el:hover {
+      cursor: pointer;
+    }
+
+    .field-text {
+      display: block;
+      height: 20px;
+      text-align: center;
+    }
+
+    .remove-hint {
+      position: absolute;
+      left: 1.5rem !important;
+      z-index: 10;
+      font-size: 12px;
+      color: red;
+      padding: 0 0.5rem 1px 0.5rem;
+      background-color: cornsilk;
+      opacity: 0;
+      text-align: center;
+      border: 1px solid lightgray;
+      border-radius: 5px;
+      transition: opacity 0.2s;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    .list-el:hover .remove-hint {
+      opacity: 1;
+    }
+
+    .models-list {
+      border: 1px solid gray;
+    }
+
+    .models-list ul {
+      color: skyblue;
+    }
+
+    .models-list ul li {
+      color: yellow;
+    }
+
+    .model-name {
+      color: #3e3e3e;
+      background-color: #e3e3e3;
+      margin-top: 3px;
+      width: calc(100% -1rem);
+      border-radius: 6px;
+      padding-left: 1rem;
+      cursor: pointer;
+    }
+
+    .fields-column {
+      display: grid;
+      grid-template-columns: 7rem 9.5rem;
+      column-gap: 5px;
+      width: max-content;
+      padding: 6px 0 6px 1rem;
+      height: auto;
+      font-family: Georgia, 'Times New Roman', Times, serif;
+      font-size: 15px !important;
+      font-weight: 500 !important;
+    }
+
+    .fields-column p {
+      margin: 4px 0 0 0;
+      padding: 2px 0 0 4px 6pc;
+      border-bottom: 1px solid lightgray;
+      text-wrap: wrap;
+    }
+
+    .fields-column p:nth-child(odd) {
+      color: skyblue;
+      cursor: pointer;
+      width: 100%;
+      padding: 2px 0 2px 0.5rem;
+    }
+
+    .fields-column p:nth-child(even) {
+      font-weight: 400 !important;
+      font-size: 12px !important;
+    }
+
+    button {
+      display: inline-block;
+      margin: 1rem 1rem 1rem 0;
+      background-color: navy;
+      color: yellow;
+      border: 1px solid gray;
+      border-radius: 5px;
+      font-size: 12px;
+      cursor: pointer;
+      padding: 3px 1rem;
+      user-select: none;
+    }
+
+    .crud-support-done {
+      width: max-content;
+      padding: 5px 2rem;
+      margin: 1rem 0 0 0;
+      color: lightgreen;
+      font-size: 14px;
+      border: 1px solid gray;
+      border-radius: 5px;
+      cursor: pointer;
+      text-align: center;
+    }
+
+    .hidden {
+      display: none;
+    }
+  </style>
+
+</head>
+
+<div>
+  <h2 style='margin-left:8rem;'>Create CRUD Support</h2>
+
+  <pre id='installPartOneId' class='hidden'>
+      <h3>Prisma Installation Part One</h3>
+The Extension Create CRUD Form Support found that Prisma ORM is not installed 
+in your project and it can help you install it. In this first part of the 
+installation it will add all the necessary packages and initiate Prisma in this 
+project installing a very basic schema in /prisma/schema.prisma file at the project
+root and set a connection string in the .env file that it created.
+It will open schema.prisma and .env contents in separate windows and the Extension 
+will display Prisma Installation Part Two page having a continue button waiting
+for you to 
+  1)  Specify your Prisma models/tables replacing the current schema.prisma content
+  2)  Specify connection string in the opened .env with correct connection string
+When you are done select the continue button to finis the installation with the commands
+listed below. If you closed the Extension in order to finish the above tasks you could
+issue the commands yourself or start the Extension again and it should display the
+Prisma Installation Part Two page with the continue button.
+
+          pnpx prisma migrate dev --name init
+          // in case of a conflict with the previous migration history, run
+          pnpx prisma migrate reset
+          // and repeat
+          pnpx prisma migrate dev --name init
+          // and finally generate the Prisma client
+          pnpx prisma generate
+          <button id='installPartOneBtnId'>Install Prisma ORM</button><button id='cancelPartOneBtnId'>Cancel</button>
+  </pre>
+
+  <pre id='installPartTwoId' class='hidden'>
+          <h3>Prisma Installation Part Two</h3>
+We assume that you finished tasks 1) and 2)
+  1)  Ctrl + double-click on .env file to open it beside this Extension and
+      enter valid connection string and save the file
+  2)  Ctrl + double-click on /prisma/schema.prisma to open it beside the Extension
+      and prepare schema models/tables
+      Use model abilities for setting defaults, generating Ids,...
+      Save the model.
+The extension  will issue the final commands for installing Prisma
+when you select continue, otherwise you can enter yourself the
+commands mentioned in the Prisma Installation Part One when 1) and 2)
+are finalized:
+
+    pnpx prisma migrate dev --name init
+    // in case of a conflict with the previous migration history, run
+    pnpx prisma migrate reset
+    // and repeat
+    pnpx prisma migrate dev --name init
+    // and finally generate the Prisma client
+    pnpx prisma generate
+
+              <button id='installPartTwoBtnId'>continue</button><button id='cancelPartTwoBtnId'>cancel</button>  
+  </pre>
+
+  <div id='crudUIBlockId' class='main-grid hidden'>
+    <div class='grid-wrapper'>
+      <pre class="span-two">
+To create a UI Form for CRUD operations against the underlying ORM fill
+out the <i>Candidate Fields</i> by entering field names in the <i>Field Name</i> input
+box with its datatype, e.g. firstName: string,  and pressing the Enter key
+or expand a table from the <i>Select Fields from ORM</i> block and click on
+a field name avoiding the auto-generating fields usually colored in pink.
+The UI Form +page.svelte with accompanying +page.server.ts will be 
+created in the route specified in the Route Name input box.
+      </pre>
+
+      <div class='left-column'>
+        <label for="routeNameId">Route Name
+          <input id="routeNameId" type="text" />
+        </label>
+        <label for='fieldNameId'>Field Name
+          <input id="fieldNameId" type="text" value='password: string' />
+        </label>
+        <button id="createBtnId" disabled>Create CRUD Support</button>
+        <div class='crud-support-done hidden'></div>
+      </div>
+
+      <div class='middle-column'>
+        <span class='candidate-fields-caption'>Candidate Fields</span>
+        <div class="fields-list" id="fieldsListId"></div>
+        <p id="removeHintId" class='remove-hint'>click to remove</p>
+      </div>
+
+
+      <div class="embellishments">
+        <div class="checkbox-item">
+          <input id="CRInput" type="checkbox" checked />
+          <label for="CRInput">CRInput component</label>
+        </div>
+        <div class="checkbox-item">
+          <input id="CRSpinner" type="checkbox" checked />
+          <label for="CRSpinner">CRSpinner component</label>
+        </div>
+        <div class="checkbox-item">
+          <input id="CRActivity" type="checkbox" checked />
+          <label for="CRActivity">CRActivity component</label>
+        </div>
+        <div class="checkbox-item">
+          <input id="CRTooltip" type="checkbox" checked />
+          <label for="CRTooltip">Tooltip component</label>
+        </div>
+        <div class="checkbox-item">
+          <input id="CRSummaryDetail" type="checkbox" checked />
+          <label for="CRSummaryDetail">Summary/Details component</label>
+        </div>
+      </div>
+    </div>
+    <div id='rightColumnId' class='right-column hidden'>
+      <span class='prisma-model-caption' onclick="closeSchemaModels()">Select Fields from ORM</span>
+      <div id="schemaContainerId">
+      </div>
+    </div>
+  </div>
+</div>
+
+<body>
+  <script>
+    // Webview Extension
+    let tablesModel = 'waiting for schemaModels '
+    let rootPath = ''
+    // const vscode = acquireVsCodeApi()
+    const noPrismaSchemaL = false
+    const installPartTwoPending = false
+
+    // let noSchemaText = 'based on variable noPrismaSchema got from getWebviewContent ' + noPrismaSchemaL ? 'FOUND NO SCHEMA' : 'YES, SCHEMA FOUND'
+
+    function installPartTwo() {
+      console.log('installPrismaPartTwo')
+    }
+    function cancelAnyPart() {
+      fields = []
+      closeSchemaModels()
+      console.log('cancel')
+    }
+    // all the elements needed to handle Prisma installation two parts
+    // and the main CRUD support UI
+    let installPartOneEl
+    let installPartTwoEl
+    let installPartOneBtnEl
+    let cancelPartOneBtnEl
+    let installPartTwoBtnEl
+    let cancelPartTwoBtnEl
+    let crudUIBlockEl
+    let rightColumnEl
+    let schemaContainerEl
+    let crudSupportDoneEl
+
+    // Fires only one time
+    // based on two variables noPrismaSchemaL and installPartTwoPending
+    // prepare event listeners or if both are false make main page visible
+    // This is how extension starts
+    window.addEventListener('load', function () {
+      // vscode.postMessage({ command: 'log', text: 'WINDOW LOAD EVENT CALLED' })
+
+      crudUIBlockEl = document.getElementById('crudUIBlockId')
+      rightColumnEl = document.getElementById('rightColumnId')
+      installPartOneEl = document.getElementById('installPartOneId')
+      installPartTwoEl = document.getElementById('installPartTwoId')
+      installPartOneBtnEl = document.getElementById('installPartOneBtnId')
+      installPartTwoBtnEl = document.getElementById('installPartTwoBtnId')
+      cancelPartOneBtnEl = document.getElementById('cancelPartOneBtnId')
+      cancelPartTwoBtnEl = document.getElementById('cancelPartTwoBtnId')
+      schemaContainerEl = document.getElementById('schemaContainerId')
+      crudSupportDoneEl = document.querySelector('.crud-support-done')
+
+      if (noPrismaSchemaL) {
+        installPartOneBtnEl.addEventListener('click', () => {
+          vscode.postMessage({ command: 'installPrisma' })
+          installPartOneBtnEl.innerText = 'installing...'
+        })
+        cancelPartOneBtnEl.addEventListener('click', cancelAnyPart)
+        // fires once so be ready it extension waits for schema and connection
+        installPartTwoBtnEl.addEventListener('click', installPartTwo)
+        cancelPartTwoBtnEl.addEventListener('click', cancelAnyPart)
+      }
+      if (installPartTwoPending) {
+        installPartTwoBtnEl.addEventListener('click', installPartTwo)
+        cancelPartTwoBtnEl.addEventListener('click', cancelAnyPart)
+      }
+      // vscode.postMessage({ command: 'log', text: 'BEFORE TURNING PARTS VISIBLE' })
+
+      if (noPrismaSchemaL) {
+        console.log('console.log -- noPrismaSchemaL')
+        // all blocks start hidden
+        installPartOneEl.classList.remove('hidden')
+      }
+      else if (installPartTwoPending) {
+        console.log('console.log -- installPartTwoPending')
+        installPartTwoEl.classList.remove('hidden')
+        // vscode.postMessage({ command: 'log', text: 'PRISMA PART TWO INSTALLATION' })
+      }
+      else {
+        console.log('console.log -- Create CRUD Support')
+        // setTimeout(() => {
+        crudUIBlockEl.classList.remove('hidden')
+        rightColumnEl.classList.remove('hidden')
+        console.log('readSchema')
+        // }, 0)
+      }
+    })
+
+
+    function closeSchemaModels() {
+      const children = schemaContainerEl.children
+      for (let i = 0; i < children.length; i++) {
+        const det = children[i]
+        if (det.hasAttribute('open')) {
+          det.removeAttribute('open')
+        }
+      }
+      fields = []
+      // fieldNameEl.value = 'password: string'
+    }
+    function attachPartTwoButtons() {
+      installPartTwoBtnEl.removeEventListener('click')
+      installPartTwoBtnEl.addEventListener('click', () => {
+        console.log('installPrismaPartTwo')
+      })
+      cancelPartTwoBtnEl.addEventListener('click', () => {
+        console.log('cancel')
+      })
+    }
+    let installPartOneDone = false
+    // Re-run binding when visible:
+    window.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && installPartOneDone) {
+        installPartTwoBtnEl.removeListener('click', installPartTwo)
+        cancelPartTwoBtnEl.removeListener('click', cancelAnyPart)
+        attachPartTwoButtons()
+      }
+    })
+
+    // Listen for extension messages
+    window.addEventListener("message", event => {
+
+      const msg = event.data
+      if (msg.command === 'installPartOneDone') {
+        installPartOneDone = true
+        installPartOneEl.classList.add('hidden')
+        // event handlers are already established
+        installPartTwoEl.classList.remove('hidden')
+        // vscode.postMessage({command: 'log',  text: 'EXT: installPartOneDone' });
+      }
+
+      if (msg.command === 'installPartTwoDone') {
+        // vscode.postMessage({ command: 'log',  text: 'EXT: installPartTwoDone' });
+        installPartTwoEl.classList.add('hidden')
+        crudUIBlockEl.classList.remove('hidden')
+        rightColumnEl.classList.remove('hidden')
+        // Request schema from the active extension
+        console.log('readSchema')
+      }
+      if (msg.command === 'createCrudSupportDone') {
+        // vscode.postMessage({ command: 'log', text: 'EXT: createCrudSupportDone confirmed' })
+        fieldsListEl.innerHTML = ''
+        routeNameEl.value = ''
+        crudSupportDoneEl.classList.remove('hidden')
+        setTimeout(() => {
+          crudSupportDoneEl.classList.add('hidden')
+        }, 3000)
+        closeSchemaModels()
+      }
+      if (msg.command === 'renderSchema') {
+        // vscode.postMessage({command: 'log',  text: 'EXT: renderSchema' });
+        renderParsedSchema(msg.payload)
+        rootPath = msg.rootPath
+      }
+      if (msg.command === 'taskError') {
+        console.log('EXT: Prisma installation err ' + msg.error)
+      }
+    })
+
+    // user clicks on fields list and it should click on a field name
+    // rendered in skyblue
+    function selectField(event) {
+      const el = event.target
+      const fieldName = el.innerText
+      if (el.style.color === 'skyblue' && !fields.includes(fieldName)) {
+        renderField(fieldName)
+      }
+    }
+    // to send to an input box the Enter key up we need an event to dispatch
+    const enterKeyEvent = new KeyboardEvent('keyup', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true
+    })
+
+    function dateTimeToDate(type) {
+      if (type === 'DateTime') {
+        return 'Date'
+      }
+      return type
+    }
+
+    let routeName = ''
+
+    function changeLabelText(id, color, text, duration) {
+      // vscode.postMessage({command:'log', text: 'changeLabelText entry point'+id})
+      // const selector = "label[for='"+ id +"']"
+      // const label = document.querySelector("label[for='routeNameId']");
+      const label = document.querySelector("label[for='" + id + "']")
+
+      // if(label){
+      //   vscode.postMessage({command:'log', text: 'querySelector FOUND label'})
+      // }else{
+      //     vscode.postMessage({command:'log', text: 'querySelector NO LABEL FOUND'})
+      // }
+      // Filter for text nodes only (excludes the <input> element)
+      const textNodes = Array.from(label.childNodes).filter(
+        (node) => node.nodeType === Node.TEXT_NODE
+      )
+
+      // Update the first (and likely only) text node
+      if (textNodes.length > 0) {
+        // save the label text
+        const nodeText = textNodes[0].textContent
+        // vscode.postMessage({command:'log', text: 'found textNode '+ nodeText})
+        textNodes[0].textContent = text
+        label.style.color = color
+        setTimeout(() => {
+          textNodes[0].textContent = nodeText
+          label.style.color = ''
+        }, 5000)
+      }
+    }
+    // a parsed schema from a Prisma ORM is sent back from the extension
+    // and as it is an HTML collection we turn it into an Object with
+    // entries to be destructed into individual object properties
+    function renderParsedSchema(schemaModels) {
+
+      function putDetailsFieldsToCandidateFields(summary) {
+        const details = summary.closest('details')
+        if (details.open) return   // user is closing the details
+        const children = details.children[1].children
+        for (let i = 0; i < children.length; i++) {
+          const filedName = children[i].innerHTML + ': ' +
+            capitalize(children[++i].innerHTML.replace(/(type:\s*?)([a-zA-Z0-9_\[\]]+)(.*)$/, '$2'))
+          // render(fieldName)
+          const savedEntry = fieldNameEl.value
+          fieldNameEl.value = fieldName
+          fieldNameEl.dispatchEvent(enterKeyEvent)
+          fieldNameEl.value = savedEntry
+        }
+      }
+      function addFieldnameToCandidateList(el) {
+        const fieldName = el.innerText
+        console.log(fieldName)
+        // let type = el.nextSibling.innerText.match(/type:\\s*(\\w+)/)?.[1];
+        let type = dateTimeToDate(el.nextSibling.innerText.match(/type:(\\S+)/)?.[1])
+        if (!'String|Number|Boolean|Role'.includes(type)) {
+          return
+        }
+
+        // the standard procedure for entering a new fieldname is via input box + Enter
+        if (el.tagName === 'P' && el.nextSibling.tagName === 'P' && !fields.includes(fieldName)) {
+          // keep inputbox value so preserve it if any and restore it after
+          const savedEntry = fieldNameEl.value
+          fieldNameEl.value = `${fieldName}: ${type}`
+          fieldNameEl.dispatchEvent(enterKeyEvent)
+          fieldNameEl.value = savedEntry
+        }
+      }
+
+      let markup = ''
+      let types = ''
+      let includeTypes = 'import type { '
+
+      try {
+        for (const [modelName, theFields] of Object.entries(schemaModels)) {
+
+          types += `
+  export type ${modelName} = {
+    `
+          includeTypes += 'db' + modelName + ', '
+          if (modelName === 'User') {
+            includeTypes += 'Role, '
+          }
+          const [, fields] = Object.entries(theFields)[0]
+          let m = ''
+
+
+          for (const [fieldName, { type, prismaSetting }] of Object.entries(fields)) {
+            if ('0|1'.includes(fieldName)) continue
+            if (fieldName.includes('password'))
+              types += `${fieldName}: ${dateTimeToDate(type)};
+    `
+            if (prismaSetting.includes('@default') || prismaSetting.includes('@updatedAt') || prismaSetting.includes('@unique')) {
+              m += `<p>${fieldName}</p><p>type:${type} <span style='color:pink'>${prismaSetting ?? 'na'}</span></p>`
+            } else {
+              m += `<p>${fieldName}</p><p>type:${type} ${prismaSetting ?? 'na'}</p>`
+            }
+          }
+
+
+          types = types.slice(0, -3) +
+            ` };
+`
+          // render field name as a collapsed summary to reveal field list when expanded
+          markup += `<details>
+          <summary class='model-name'>${modelName}</summary>
+          <div class='fields-column'>${m}</div>
+          </details>`
+        }
+        includeTypes = includeTypes.slice(0, -2) + ` }  from '$lib/types/types';
+  `
+        vscode.postMessage({ command: 'saveTypes', payload: types, includeTypes })
+      } catch (err) {
+        vscode.postMessage({ command: 'log', text: 'renderParsedSchema: ' + err })
+      }
+      // now all the markup constructed as a string render into  schemaContainerEl
+      schemaContainerEl.innerHTML = markup
+
+      // schemaContainerEl gets click event but it has to be from the first <p> element
+      // and that fieldname (innerText) id ignored if already saved in the fields
+      schemaContainerEl.addEventListener('click', (event) => {
+
+        if (event.target.tagName === 'SUMMARY') {
+          if (event.target.closest('details').open) return
+          routeNameEl.value = event.target.innerText.toLowerCase()
+          routeNameEl.focus()
+          routeNameEl.click()
+          changeLabelText('routeNameId', 'pink', 'Change Route Name if necessary', 5000)
+          putDetailsFieldsToCandidateFields(event.target)
+          return
+        }
+        const el = event.target
+        const fieldName = el.innerText
+        // let type = el.nextSibling.innerText.match(/type:\\s*(\\w+)/)?.[1];
+        let type = dateTimeToDate(el.nextSibling.innerText.match(/type:(\\S+)/)?.[1])
+        // vscode.postMessage({command: 'log',  text: ('clicked type', type) });
+        if (!'String|Number|Boolean'.includes(type)) {
+          return
+        }
+
+        // the click is not on a SUMMARY, so a field name is clicked
+        // the standard procedure for entering a new fieldname is via input box + Enter
+        if (el.tagName === 'P' && el.nextSibling.tagName === 'P' && !fields.includes(fieldName)) {
+          // we need input box so preserve its entry if any and restore after
+          const savedEntry = fieldNameEl.value
+          fieldNameEl.value = `${fieldName}: ${type}`
+          fieldNameEl.dispatchEvent(enterKeyEvent)
+          fieldNameEl.value = savedEntry
+        }
+      })
+    }
+
+    // FieldsList elements use inline style for high specificity as they are created dynamically 
+    // by inserting innerHTML, so the inline style is in the listElCSS variable
+    const listElCSS = 'color:black; font-size:14px; font-weight: 400; background-color: skyblue; margin: 2px 0 0 0;'
+
+    // its data-filed-index are read via el.getAttribute('data-field-index')
+    // or using camel case property name replacing 'data-' with .dataset
+    // el.dataset.fieldIndex where data-field-index turn to .dataset.fieldIndex 
+
+    let fields = []
+    // for removing element from the fields list every fieldName is given short id
+    // as data-field-index HTML attribute and received on click event and read
+    const getUniqueId = () => {
+      // convert to a string of an integer from base 36
+      return Math.random().toString(36).slice(2)
+    }
+
+    const removeHintEl = document.getElementById('removeHintId')
+    removeHintEl.style.opacity = '0'    // make it as a hidden tooltip
+
+    // when a fieldsList schemaContainerEl is full scroll it so the last element
+    // is exposed visible
+    const scroll = (el) => {
+      if (
+        el.offsetHeight + el.scrollTop >
+        el.getBoundingClientRect().height - 20
+      ) {
+        setTimeout(() => {
+          el.scrollTo(0, el.scrollHeight)
+        }, 0)
+      }
+    }
+    // and the route name is specified
+    const disableCreateButton = () => {
+      createBtnEl.disabled = !fields.length || !routeName
+    }
+
+    function adjustFiledNameAndType(val) {
+      val = val.replace(/\\s+/g, '')
+
+      if (!val.match(/\\s*[a-zA-z0-9_]+\\s*\\:\\s*([a-zA-z0-9_]+)/)?.[1]) {
+        val = val.replace(/\\:.*$/, '') + ': string'
+      } else {
+        val = val.replace(/([a-zA-z0-9_]+)\:([a-zA-z0-9_]+)/, '$1: $2')
+      }
+      return val
+    }
+
+    // the two input boxes for route name and fieldName, which is
+    // used repeatedly for making Candidate Fields
+    const routeNameEl = document.getElementById('routeNameId')
+    const fieldNameEl = document.getElementById('fieldNameId')
+
+    const fieldsListEl = document.getElementById('fieldsListId')
+    const createBtnEl = document.getElementById('createBtnId')
+
+    routeNameEl.addEventListener('input', (e) => {
+      routeName = e.target.value
+      disableCreateButton()
+    })
+    routeNameEl.addEventListener('click', (e) => {
+      routeName = e.target.value
+      disableCreateButton()
+    })
+
+    if (fieldNameEl) {
+      fieldNameEl.addEventListener('keyup', (event) => {
+        // vscode.postMessage({command: 'log',  text: 'fieldNameEl.addEventListener created' });
+        let v = fieldNameEl.value.trim().replace(/\\bstring\\b/, 'String')
+        if (!v) {
+          // vscode.postMessage({command: 'log',  text: 'field is empty' });
+          return
+        }
+        v = adjustFiledNameAndType(v)
+        if (fields.includes(v)) {
+          setTimeout(() => {
+            fieldNameEl.style.color = 'red'
+          }, 0)
+          return
+        }
+        if (fieldNameEl.style.color === 'red') {
+          fieldNameEl.style.color = 'black'
+        }
+        if (event.key !== 'Enter') return
+        fields.push(v)
+        disableCreateButton()
+        renderField(v)
+        fieldNameEl.value = ''
+        scroll(fieldsListEl)
+      })
+    }
+    // we do not clear all the entries and rebuild from the fields
+    // but just add a newly entered in the Field Name fieldNameId
+    function renderField(fieldName) {
+      vscode.postMessage({ command: 'log', text: 'render ' + fieldName })
+      // internal sub-function
+      const fieldNameFromIndex = (index) => {
+        const listEls = fieldsListEl.querySelectorAll('.list-el')
+        let name = ''
+        // forEach 
+        listEls.forEach(listEl => {
+          if (listEl.dataset.fieldIndex === index) {
+            name = listEl.firstChild.innerText
+          }
+        })
+        return name
+      }
+      // Create elements
+      const div = document.createElement('div')
+      const span = document.createElement('span')
+
+      // Set attributes and content
+      div.className = 'list-el'
+      div.dataset.fieldIndex = getUniqueId()
+      div.style.setProperty('--hover-display', 'none')
+      div.style.cssText = listElCSS
+
+      span.className = 'field-text'
+      span.textContent = fieldName
+
+      // Append structure
+      div.appendChild(span)
+      fieldsListEl.appendChild(div)
+
+      // so getBoundingClientRect() can be destructured
+      // const { x, y } = fieldsListEl.getBoundingClientRect()
+      setTimeout(() => {
+        const listEls = fieldsListEl.querySelectorAll('.list-el')
+        listEls.forEach(el => {
+          el.addEventListener('mouseenter', () => {
+            removeHintEl.style.top = String(el.offsetTop - el.offsetHeight) + 'px'
+            removeHintEl.style.left = String(el.offsetLeft + 12) + 'px'
+            removeHintEl.style.opacity = '1'
+          })
+
+          el.addEventListener('mouseleave', () => {
+            removeHintEl.style.opacity = '0'
+          })
+
+          el.addEventListener('click', () => {
+            removeHintEl.style.opacity = '0'
+
+            if (fieldNameEl.value === '') {
+              fieldNameEl.value = el.innerText
+              fieldNameEl.focus()
+            }
+            const index = el.dataset.fieldIndex
+            const fieldName = fieldNameFromIndex(index)
+            fields = fields.filter(el => el !== fieldName)
+            el.remove()
+          })
+        })
+      }, 400)
+    }
+    const selectedCheckboxes = () => {
+      // Get all checkboxes in the document
+      const checkboxes = document.querySelectorAll('input[type="checkbox"]')
+      // Array of checked checkbox IDs only
+      return Array.from(checkboxes)
+        .filter(checkbox => checkbox.checked)
+        .map(checkbox => checkbox.id)
+    }
+
+    createBtnEl.addEventListener('click', () => {
+      if (routeName && fields.length) {
+        // user has chance to change route name 
+        document.querySelector('.crud-support-done').innerHTML = "route <span style='color:pink;'>" + routeNameEl.value + "</span>  created"
+        const payload = { routeName, fields, embellishments: selectedCheckboxes() }
+        vscode.postMessage({ command: 'createCrudSupport', payload: payload })
+      }
+    })
+  </script>
+</body>
+
+</html>

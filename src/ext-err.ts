@@ -70,7 +70,7 @@ function deletePendingFile(){
   if (fs.existsSync(pendingFile)){
     fs.unlink(pendingFile, (err) => {
       if (err) {
-        vscode.window.showInformationMessage('Could not delete installPartTwo.pending file at /prisma. Delete it yourself');
+        vscode.window.showInformationMessage('Could not delete installPartTwo.pending file at App Root. Delete it yourself');
       }
     });
   }
@@ -110,7 +110,7 @@ function execShell(cmd: string): Promise<string> {
 
 function sendToTerminal(cmd: string) {
   if (!terminal) {
-    terminal = vscode.window.createTerminal(`WebView Terminal`);
+    terminal = vscode.window.createTerminal('WebView Terminal');
   }
   terminal.show(true); // reveal the terminal
   terminal.sendText(cmd);
@@ -290,6 +290,7 @@ function initValues(){
 }
 
 function nullType(fName:string){
+  // @ts-expect-error
   let [ , name, type] = fName.match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m);
   // fName includes type and we added | null
   if (type.includes('[]')){
@@ -1019,10 +1020,10 @@ function createCRSpinner(){
     hidden = $bindable(true),
     disabled = $bindable(false),
     cursor = $bindable(true),
-    color = \`skyblue\`,
-    duration = \`1.5s\`,
-    spinnerSize = \`1em\`,
-    top = \`0\`,
+    color = 'skyblue',
+    duration = '1.5s',
+    spinnerSize = '1em',
+    top = '0',
     width = 'max-content',
     height = '2rem',
   }: TProps = $props();
@@ -1570,7 +1571,7 @@ CRTooltip could accept the following props, though all are optional
 {#if initial}
   <div
     bind:this={tooltipPanelEl}
-    style="\`position:absolute;top:-9999px !important;left:-9999px !important;visibility:hidden;padding:0;margin:0;border:none;outline:none;width:max-content;"
+    style="position:absolute;top:-9999px !important;left:-9999px !important;visibility:hidden;padding:0;margin:0;border:none;outline:none;width:max-content;"
     class="ttWrapper"
   >
     {@render runtimePanel?.(panelArgs)}
@@ -1866,8 +1867,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // const defaultFolderPath: string = '/home/mili/TEST/cr-crud-extension';
   rootPath = await execShell('pwd');
   rootPath = rootPath.replace(/\n$/,'');
-  // vscode.window.showInformationMessage('rootPath ' + rootPath)
-  // vscode.window.showErrorMessage('execShell pwd '+ rootPath);
+  vscode.window.showInformationMessage('rootPath ' + rootPath)
+  vscode.window.showErrorMessage('execShell pwd '+ rootPath);
 
   // if (!workspaceFolders || workspaceFolders.length === 0) {
   //   // Check if default path exists
@@ -2128,7 +2129,7 @@ export async function activate(context: vscode.ExtensionContext) {
         panel.webview.postMessage({
           command: "createCrudSupportDone"
         });
-        outputChannel.appendLine(`[WebView] createCrudSupport DONE`);
+        outputChannel.appendLine('[WebView] createCrudSupport DONE');
         outputChannel.show(false);
       }
       else if(msg.command === 'saveTypes'){
@@ -2154,7 +2155,6 @@ export async function activate(context: vscode.ExtensionContext) {
         }
       }
       else if(msg.command === 'log'){
-        // vscode.window.showInformationMessage(`Bane command log ${msg.text}`);
         vscode.window.showInformationMessage(`log ${msg.text}`);
         // log should have at least a text property
         // Or log to output channel
@@ -2547,11 +2547,10 @@ created in the route specified in the Route Name input box.
           <input id="routeNameId" type="text" />
         </label>
         <label for='fieldNameId'>Field Name
-          <input id="fieldNameId" type="text" />
+          <input id="fieldNameId" type="text" value='password: string' />
         </label>
         <button id="createBtnId" disabled>Create CRUD Support</button>
         <div class='crud-support-done hidden'></div>
-        <!-- <div id='messages' style='z-index:10;width:20rem;'>Messages:</div> -->
       </div>
 
       <div class='middle-column'>
@@ -2801,15 +2800,15 @@ created in the route specified in the Route Name input box.
         setTimeout(() => {
           textNodes[0].textContent = nodeText;
           label.style.color = '';
-        }, 10000)
+        }, 5000)
       }
   }
-  
+
   // a parsed schema from a Prisma ORM is sent back from the extension
   // and as it is an HTML collection we turn it into an Object with
   // entries to be destructed into individual object properties
   function renderParsedSchema(schemaModels) {
-
+    
     function addFieldnameToCandidateList(el){
       const fieldName = el.innerText
       vscode.postMessage({command:'log', text: fieldName})
@@ -2869,8 +2868,8 @@ created in the route specified in the Route Name input box.
           <div class='fields-column'>\${m}</div>
           </details>\`
       }
-      includeTypes = includeTypes.slice(0, -2) + \` }  from '\$lib/types/types';
-  \`
+      includeTypes = includeTypes.slice(0, -2) + ' }  from '$lib/types/types';
+
       vscode.postMessage({ command: 'saveTypes', payload: types, includeTypes })
     } catch (err) {
       vscode.postMessage({command: 'log',  text: 'renderParsedSchema: ' + err });
@@ -2883,83 +2882,38 @@ created in the route specified in the Route Name input box.
     schemaContainerEl.addEventListener('click', (event) => {
 
       if (event.target.tagName === 'SUMMARY') {
+        if (event.target.closest('details').open) return;
         routeNameEl.value = event.target.innerText.toLowerCase()
         routeNameEl.focus()
         routeNameEl.click()
+        changeLabelText('routeNameId', 'pink', 'Change Route Name if necessary', 5000)
+        fieldNameEl.value = 'surprise!'
+        // putDetailsFieldsToCandidateFields(event.target)
         const details = event.target.closest('details');
         if (details.open) {
-          return;
+          fieldNameEl.value = 'closing a model'
+          return;   // user is closing the details
         }
-        changeLabelText('routeNameId', 'pink', 'Change Route Name if necessary', 4000)
-        //----------------
-        // const msgEl = document.getElementById('messages')
-        let arr = Object.entries(schemaModels).join('|')
-        arr = arr.replace(/,..bject .bject./g,'');
-        // routeNameEl.value = arr
-
-        const children = details.children[1].children;
-        const savedEntry = fieldNameEl.value;
-        // msgEl.innerHTML = 'children# '+ children.length;
-        for (let i = 0; i < children.length; i++) {
-          const fieldName = children[i].innerHTML.replace(/DateTime/, 'Date').replace(/.*?(password).*/, 'password');
-          // if password is included by opening ModelName SUMMARY clear if from fieldNameEl
-          if (fieldName === 'password'){
-            fieldNameEl.value = ''
-          }
-          // msgEl.innerHTML += '<br/>fieldName: '+ fieldName +' children[i+1]: '+ children[i+1].innerHTML;
-          try{
-            // msgEl.innerHTML += '<br/>before children[i+1] match';
-            let match = children[i+1].innerHTML.match(/\s*?type:([a-zA-Z0-9_]+)(.*)$/);
-            // msgEl.innerHTML += 'fieldName: '+ fieldName +' match[1]: '+ match[1] +', match[2]: '+ match[2];
-            const type = match[1].replace(/DateTime/, 'Date');
-            // msgEl.innerHTML += 'fieldName: '+ fieldName +' type: '+ type +' match[1]: '+ match[1] +', match[2]: '+ match[2];
-
-            // msgEl.innerHTML += '<br/>'+ type.toLowerCase()
-            if ( type === null ) {
-              i++
-              continue
-            };
-            const prismaAttrs = match[2];
-            let include = false;
-            // msgEl.innerHTML += '<br/>prismaAttrs: '+ prismaAttrs;
-            if (prismaAttrs) {
-              const hasRole = type === 'Role';
-              // msgEl.innerHTML += '<br/> hasRole: '+ hasRole;
-              // if brackets with space 'Article[  ]' tighten the brackets temporarily
-              const hasBrackets = match[2].includes('[]');
-              // msgEl.innerHTML += '<br/> hasBrackets: '+ hasBrackets;
-
-              // for brackets with space Article[  ] js cannot handle regex test
-              // const hasBrackets = /.*?\[\s*?\]/.test(match[2])
-
-              const hasTwoAt = fieldName.includes('@@');
-              // msgEl.innerHTML += '<br/> hasTwoAt: '+ hasTwoAt;
-              const hasId = prismaAttrs.includes('@id');
-              // msgEl.innerHTML += '<br/> hasId: '+ hasId;
-              const attrsHasAt = prismaAttrs.match(/@default|@default(now())|@unique|@createdAt/) !== null;
-              // msgEl.innerHTML += '<br/> attrsHasAt: '+ attrsHasAt;
-              // include = (attrsHasAt && !hasRole && hasTwoAt && !hasId) || hasBrackets;
-              
-              include = !attrsHasAt && !hasTwoAt && !hasBrackets || hasId || hasRole;
-              // msgEl.innerHTML += '<br/> include: '+ include;
-
-            }
-            //   msgEl.innerHTML += '<br/> @attributes: '+ attrsHasAt +' hasRole: '+ hasRole +' hasTwoAt: '+ hasTwoAt +' hasId: '+ hasId +' hasBrackets: '+ hasBrackets +'<br/>';
-            if (include){
-              // msgEl.innerHTML += '<br/> dispatch fieldName'
-              if (!arr.includes(type)){
-                fieldNameEl.value = fieldName +': '+ type;
-                fieldNameEl.dispatchEvent(enterKeyEvent)
-              }
-            }else{
-              // msgEl.innerHTML += '<br/> nothing to dispatch'
-            }
-          }finally{
-            // msgEl.innerHTML += '<br/>finally<br/><br/>'
-          }
-          i += 1
+        if (details){
+          fieldNameEl.value = 'details acquired'
+          const children = details.children[1].children;
+          fieldNameEl.value += ' -- '+ children.length
+          const children = details.children[1]?.children;
+          fieldNameEl.value = 'OK # is ' + children.length;
+          // for (let i = 0; i < children.length; i++) {
+          //   let s = children[i + 1]?.innerHTML.replace(/([^:]+:)\s*?([a-zA-Z0-9_\[\]]+)(.*)$/, '$2')
+          //   s = capF(s)
+          //   let fieldName = children[i].innerHTML + ': ' + s
+          //   fieldNameEl.value += fieldName
+          //   i++
+          //   // console.log(fieldName)
+          // }
+            // render(fieldName)
+            // const savedEntry = fieldNameEl.value
+            // fieldNameEl.value = fieldName
+            // fieldNameEl.dispatchEvent(enterKeyEvent)
+            // fieldNameEl.value = savedEntry
         }
-        fieldNameEl.value = savedEntry
         return
       }
       const el = event.target
@@ -3076,7 +3030,8 @@ created in the route specified in the Route Name input box.
 // we do not clear all the entries and rebuild from the fields
   // but just add a newly entered in the Field Name fieldNameId
   function renderField(fieldName) {
-
+    // vscode.postMessage({ command:'log', text: 'render '+ fieldName})
+    // internal sub-function
     const fieldNameFromIndex = (index) => {
       const listEls = fieldsListEl.querySelectorAll('.list-el')
       let name = ''

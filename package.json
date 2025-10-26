@@ -32,7 +32,7 @@
     "pretest": "pnpm run compile && pnpm run lint",
     "lint": "eslint src",
     "test": "vscode-test",
-    "pak": "tsc -p ./;  vsce package --no-dependencies; VERSION=$(jq -r '.version' /home/mili/TEST/cr-crud-extension/package.json); code --install-extension /home/mili/TEST/cr-crud-extension/cr-crud-extension-${VERSION}.vsix;"
+    "pak": "clear; tsc -p ./;  vsce package --no-dependencies; VERSION=$(jq -r '.version' /home/mili/TEST/cr-crud-extension/package.json); code --install-extension /home/mili/TEST/cr-crud-extension/cr-crud-extension-${VERSION}.vsix;"
   },
   "devDependencies": {
     "@types/vscode": "^1.105.0",
