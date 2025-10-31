@@ -58,7 +58,18 @@ const sleep = async (ms: number) => {
       }, ms)
     })
   }
+function createDBExportFile(){
+  const exportDbPath = path.join(rootPath, '/src/server/db.ts');
+  if (!fs.existsSync(exportDbPath)){
+    fs.writeFileSync(exportDbPath, `import { PrismaClient } from '@prisma/client';
 
+// export const db = new PrismaClient();
+export const db = new PrismaClient({
+	log: ['warn', 'error']
+});
+// log: ['query', 'info', 'warn', 'error']`)
+  }
+}
 function createPendingFile(){
   const pendingFile = path.join(rootPath, '/prisma/installPartTwo.pending');
   if (!fs.existsSync(pendingFile)){
@@ -1130,7 +1141,7 @@ function createCRActivity(){
     return users.filter((user) => user.id === selectedUserId)[0]?.role as Role;
   };
   // svelte-ignore non_reactive_update
-  let msgEl: HTMLSpanElement;
+  // let msgEl: HTMLSpanElement;
   // svelte-ignore non_reactive_update
   let selectBox: HTMLSelectElement;
   let timer: NodeJS.Timeout | string | number | undefined; //ReturnValue<typeof setTimeout>;
@@ -2713,7 +2724,10 @@ created in the route specified in the Route Name input box.
   let crudSupportDoneEl
   let fieldModelsJSON
   let fieldModels
+  let theFields = [];
   let msgEl
+  let labelEl
+  let routeLabelNode
   let timer
 
   // Fires only one time
@@ -2733,6 +2747,10 @@ created in the route specified in the Route Name input box.
     cancelPartTwoBtnEl = document.getElementById('cancelPartTwoBtnId')
     schemaContainerEl = document.getElementById('schemaContainerId')
     crudSupportDoneEl = document.querySelector('.crud-support-done')
+    labelEl = document.querySelector("label[for='routeNameId']");
+    routeLabelNode = Array.from(labelEl.childNodes).filter(
+      (node) => node.nodeType === Node.TEXT_NODE
+      )[0];
     msgEl = document.getElementById('messagesId')
     msgEl.addEventListener('dblclick', () => {
       msgEl.innerHTML = ''
@@ -2895,39 +2913,26 @@ created in the route specified in the Route Name input box.
 
   let routeName = ''
   
-  function changeLabelText(id, color, text, duration){
-    const label = document.querySelector("label[for='"+ id +"']");
-  
-    // Filter for text nodes only (excludes the <input> element)
-    const textNodes = Array.from(label.childNodes).filter(
-      (node) => node.nodeType === Node.TEXT_NODE
-      );
-      
-      // Update the first (and likely only) text node
-      if (textNodes.length > 0) {
-        // save the label text
-        const nodeText = textNodes[0].textContent
-        // vscode.postMessage({command:'log', text: 'found textNode '+ nodeText})
-        textNodes[0].textContent = text;
-        label.style.color = color;
-        timer = setTimeout(() => {
-          textNodes[0].textContent = nodeText;
-          label.style.color = '';
-        }, duration)
-      }
+  function changeLabelText(color, text, duration){
+
+    // Update the first (and likely only) text node
+    const nodeText = routeLabelNode.textContent;
+    // vscode.postMessage({command:'log', text: 'found textNode '+ nodeText})
+    routeLabelNode.textContent = text;
+    labelEl.style.color = color;
+    timer = setTimeout(() => {
+      routeLabelNode.textContent = nodeText;
+      labelEl.style.color = '';
+    }, duration)
   }
-function clearLabelText(){
-  // clearTimeout(timer);
-  // msgEl.innerHTML += '<br/>clearLabelText';
-  const label = document.querySelector("label[for='"+ id +"']");
-  const textNodes = Array.from(label.childNodes).filter(
-      (node) => node.nodeType === Node.TEXT_NODE
-      );
-  if (textNodes.length > 0) {
-    label.style.color = '';
-    textNodes[0].textContent = 'Route Name';
+  function clearLabelText(){
+    clearTimeout(timer);
+    // msgEl.innerHTML += '<br/>clearLabelText';
+
+      labelEl.style.color = '';
+      routeLabelNode.textContent = 'Route Name';
+
   }
-}
 
   // a parsed schema from a Prisma ORM is sent back from the extension
   // and as it is an HTML collection we turn it into an Object with
@@ -3016,9 +3021,8 @@ function clearLabelText(){
           clearLabelText();
           return;
         }
-        changeLabelText('routeNameId', 'pink', 'Change Route Name if necessary', 4000)
+        changeLabelText('pink', 'Change Route Name if necessary', 4000)
         //----------------
-        let theFields = [];
         if (fieldModels){
           msgEl.innerHTML += '<br/>SUMMARY fieldModels found: '+ JSON.stringify(fieldModels) + ' modelName: '+ modelName;
           
