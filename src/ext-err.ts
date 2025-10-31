@@ -33,18 +33,18 @@ internal user table so we use plural instead.
 */`
 
 const envWhatToDo = `# Environment variables declared in this file are automatically made available to Prisma.
-# See the documentation for more detail: https://pris.ly/d/prisma-schema#accessing-environment-variables-from-the-schema
+// See the documentation for more detail: https://pris.ly/d/prisma-schema//accessing-environment-variables-from-the-schema
 
-# Prisma supports the native connection string format for PostgreSQL, MySQL, SQLite, SQL Server, MongoDB and CockroachDB.
-# See the documentation for all the connection string options: https://pris.ly/d/connection-strings
+// Prisma supports the native connection string format for PostgreSQL, MySQL, SQLite, SQL Server, MongoDB and CockroachDB.
+// See the documentation for all the connection string options: https://pris.ly/d/connection-strings
 
-# example is for PostgreSQL, change values wrapped in < >
-# <username> is a Role in PostgreSQL
-# <password> is username's db password
-# <dbName> is database name to connect to
-DATABASE_URL="postgresql://<username>:<password>@localhost:5432/<dbName>?schema=public"
+// example is for PostgreSQL, change values wrapped in
+// username is a Role in PostgreSQL
+// password is username's db password
+// dbName is database name to connect to
+//DATABASE_URL="postgresql://username:password@localhost:5432/dbName?schema=public"
 
-# see docs for how to use SECRET_API_KEYs
+// see docs for how to use SECRET_API_KEYs
 SECRET_APT_KEY="kiki:kiki@localhost:5432
 SECRET_APT_ENV=development
 SECRET_API_KEY=1234567890`;
@@ -70,7 +70,7 @@ function deletePendingFile(){
   if (fs.existsSync(pendingFile)){
     fs.unlink(pendingFile, (err) => {
       if (err) {
-        vscode.window.showInformationMessage('Could not delete installPartTwo.pending file at App Root. Delete it yourself');
+        vscode.window.showInformationMessage('Could not delete installPartTwo.pending file at /prisma. Delete it yourself');
       }
     });
   }
@@ -110,7 +110,7 @@ function execShell(cmd: string): Promise<string> {
 
 function sendToTerminal(cmd: string) {
   if (!terminal) {
-    terminal = vscode.window.createTerminal('WebView Terminal');
+    terminal = vscode.window.createTerminal(`WebView Terminal`);
   }
   terminal.show(true); // reveal the terminal
   terminal.sendText(cmd);
@@ -1020,10 +1020,10 @@ function createCRSpinner(){
     hidden = $bindable(true),
     disabled = $bindable(false),
     cursor = $bindable(true),
-    color = 'skyblue',
-    duration = '1.5s',
-    spinnerSize = '1em',
-    top = '0',
+    color = \`skyblue\`,
+    duration = \`1.5s\`,
+    spinnerSize = \`1em\`,
+    top = \`0\`,
     width = 'max-content',
     height = '2rem',
   }: TProps = $props();
@@ -1571,7 +1571,7 @@ CRTooltip could accept the following props, though all are optional
 {#if initial}
   <div
     bind:this={tooltipPanelEl}
-    style="position:absolute;top:-9999px !important;left:-9999px !important;visibility:hidden;padding:0;margin:0;border:none;outline:none;width:max-content;"
+    style="\`position:absolute;top:-9999px !important;left:-9999px !important;visibility:hidden;padding:0;margin:0;border:none;outline:none;width:max-content;"
     class="ttWrapper"
   >
     {@render runtimePanel?.(panelArgs)}
@@ -1780,8 +1780,8 @@ async function findPrismaSchemaRoot(): Promise<string | null> {
       currentPath = parentPath;
     }
   }
-    return null
-  }
+  return null
+}
 
   function sortObjectKeys<T>(obj: Record<string, T>): Record<string, T> {
     return Object.fromEntries(
@@ -1814,6 +1814,13 @@ async function findPrismaSchemaRoot(): Promise<string | null> {
   type SchemaModels = {
     [modelName: string]: ModelInfo;
   };
+  // {} has [key,value] easy to select a model via key
+  // for (const [modelName, fields] of Object.entries(models)) {   // iterating
+  type Models = {
+    [modelName: string]: string[];
+  }
+  const modelsFieldNames: Models = {};  
+  let strModelNames = '|'
 
   function parsePrismaSchema(schemaContent: string): SchemaModels {
     const models: SchemaModels = {};
@@ -1856,6 +1863,72 @@ async function findPrismaSchemaRoot(): Promise<string | null> {
     };
   }
   
+  /* 
+    This function returns models as SchemaModels so use it to populate above Models
+    for data entry fields avoid fieldNames that are
+    models itself like Todo, Profile, containing @@ chars 
+    and some of @unique, @default, @default(now(), modelName), @relation
+  */
+  // make a string-list of modelNames like '|Todo|User|Profile|'
+  for (const [modelName, theFields] of Object.entries(models)) {
+    strModelNames += modelName +'|'
+  }
+  /*
+    modelsFieldNames['User'] holds
+    email: String 
+    firstName: String 
+    id: String 
+    lastName: String 
+    password: String 
+    profile: Profile?         -- incorrect as model name
+    role: Role 
+    updatedAt: DateTime? 
+    userAuthToken: String     -- incorrect @unique
+
+  */
+  for (const [modelName, theFields] of Object.entries(models)) {
+    let arrFields = []
+    const [, fields] = Object.entries(theFields)[0]
+      for (let [fieldName, { type, prismaSetting }] of Object.entries(fields)) {
+        if ('0|1'.includes(fieldName)) continue
+        // type could be optional, so remove ? if any as it cannot match model name
+        type = type.replace(/\?/g, '')
+        if (fieldName.includes('password')){  // passwordHash or similar
+          fieldName = 'password'
+        }
+        if (type=='DateTime'){
+          type = 'Date';
+        }
+        // exclude this field names
+        const pattern = '@default\\((' + strModelNames +'now\\(\\))\\)';
+        let regex = new RegExp(pattern);
+        let m = prismaSetting.match(regex);   // null if failed
+        if(m && m[1]) continue;               // not data entry field name
+
+        // type cannot be a model name like Profile...
+        regex = new RegExp('('+ strModelNames.slice(1,-1) +')');
+        m = type.match(regex);   // null if failed
+        if (m && m[1]) continue
+
+        m = prismaSetting.match(/(@unique|@createdAt)/);  // non-mutable
+        if(m && m[1]) continue;
+
+        const hasBrackets = type.includes('[]');
+        const hasId = prismaSetting.includes('@id');
+        const hasRole = type === 'Role';
+        const include = !hasBrackets || hasId || hasRole;
+        if (include){
+          arrFields.push(fieldName + ': '+ type)
+        }
+    }
+    try{
+      modelsFieldNames[modelName] = arrFields;
+    }catch(err){
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log('cannot add a model'+ msg)
+    }
+  }
+
   return models;
 }
 
@@ -1867,8 +1940,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // const defaultFolderPath: string = '/home/mili/TEST/cr-crud-extension';
   rootPath = await execShell('pwd');
   rootPath = rootPath.replace(/\n$/,'');
-  vscode.window.showInformationMessage('rootPath ' + rootPath)
-  vscode.window.showErrorMessage('execShell pwd '+ rootPath);
+  // vscode.window.showInformationMessage('rootPath ' + rootPath)
+  // vscode.window.showErrorMessage('execShell pwd '+ rootPath);
 
   // if (!workspaceFolders || workspaceFolders.length === 0) {
   //   // Check if default path exists
@@ -2066,13 +2139,28 @@ export async function activate(context: vscode.ExtensionContext) {
           const schemaContent = fs.readFileSync(prismaSchemaPath, "utf-8");
 
           const parsedSchema = parsePrismaSchema(schemaContent);
+          try{
+            if(modelsFieldNames){
+              outputChannel.appendLine('modelsFieldNames found'); outputChannel.show();
+              outputChannel.appendLine('strModelNames:' + strModelNames); outputChannel.show();
+
+              // outputChannel.appendLine(JSON.stringify(modelsFieldNames,null,2)); outputChannel.show();
+
+            } else {
+              outputChannel.appendLine('modelsFieldNames NOT found'); outputChannel.show();
+            }
+          }catch(err){
+            const msg = err instanceof Error ? err.message : String(err);
+            outputChannel.appendLine('No modelsFieldNames found '+ msg);  outputChannel.show();
+          }
 
           // TODO: parse schemaContent and send back to WebView
           // ---------------------- JSON parser schemaModels via command sendingSchemaModel  ----------------------
           panel.webview.postMessage({
             command: "renderSchema",
             payload: parsedSchema,
-            rootPath: rootPath
+            rootPath: rootPath,
+            modelsFieldNames
           });
           // vscode.window.showErrorMessage('This is a test vscode.window.showErrorMessage');
         } catch (error) {
@@ -2129,7 +2217,7 @@ export async function activate(context: vscode.ExtensionContext) {
         panel.webview.postMessage({
           command: "createCrudSupportDone"
         });
-        outputChannel.appendLine('[WebView] createCrudSupport DONE');
+        outputChannel.appendLine(`[WebView] createCrudSupport DONE`);
         outputChannel.show(false);
       }
       else if(msg.command === 'saveTypes'){
@@ -2155,6 +2243,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
       }
       else if(msg.command === 'log'){
+        // vscode.window.showInformationMessage(`Bane command log ${msg.text}`);
         vscode.window.showInformationMessage(`log ${msg.text}`);
         // log should have at least a text property
         // Or log to output channel
@@ -2547,10 +2636,11 @@ created in the route specified in the Route Name input box.
           <input id="routeNameId" type="text" />
         </label>
         <label for='fieldNameId'>Field Name
-          <input id="fieldNameId" type="text" value='password: string' />
+          <input id="fieldNameId" type="text" />
         </label>
         <button id="createBtnId" disabled>Create CRUD Support</button>
         <div class='crud-support-done hidden'></div>
+        <div id='messagesId' style='z-index:10;width:20rem;'>Messages:</div>
       </div>
 
       <div class='middle-column'>
@@ -2605,10 +2695,56 @@ created in the route specified in the Route Name input box.
     vscode.postMessage({ command: 'installPrismaPartTwo' })
   }
   function cancelAnyPart() {
-    fields = []
+    // fields = []
     closeSchemaModels()
     vscode.postMessage({ command: 'cancel' })
   }
+
+  // to send to an input box the Enter key up we need an event to dispatch
+  const enterKeyEvent = new KeyboardEvent('keyup', {
+    key: 'Enter',
+    code: 'Enter',
+    keyCode: 13,
+    which: 13,
+    bubbles: true
+  })
+
+  let theModels
+  // at initial call try to get models from code below that has access to them and save it for a real call
+  function fillOutCandidateFields(models){
+    msgEl.innerHTML += '<br/>fillOutCandidateFields entry point'
+    if (typeof models !== 'undefined') {
+      theModels = models;
+      msgEl.innerHTML += '<br/>initial call to get theModels';
+      const entryFields = models['User'];
+      entryFields.forEach(fieldName => {
+        msgEl.innerHTML += '<br/>added '+ fieldName;
+        fieldNameEl.value = fieldName;
+        fieldNameEl.dispatchEvent(enterKeyEvent);
+      })
+    }else{
+      msgEl.innerHTML += '<br/>real call to fillOutCandidateFields';
+    //   try{
+    //     if (theModels){
+    //       msgEl.innerHTML += '<br/>modelsFieldNames found on SUMMARY'})
+    //     }
+    //   }catch(err){
+    //     const msg = err instanceof Error ? err.message : String(err);
+    //     msgEl.innerHTML += '<br/>test on theModels err: '+ msg;
+    //   }
+    //   msgEl.innerHTML += '<br/>when change route name -- new code to run <br/> User.length '+ theModels['User'].length;
+    //   const entryFields = theModels[modelName];
+    //   msgEl.innerHTML += '<br/>dataEntryFields '+ entryFields.join(', ');
+    //   const savedEntry = fieldNameEl.value;
+    //   fieldNameEl.focus();
+    //   entryFields.forEach(fieldName => {
+    //     fieldNameEl.value = fieldName;
+    //     fieldNameEl.dispatchEvent(enterKeyEvent);
+    //   })
+    //   fieldNameEl.value = savedEntry;
+    }
+  }
+
   // all the elements needed to handle Prisma installation two parts
   // and the main CRUD support UI
   let installPartOneEl
@@ -2621,6 +2757,12 @@ created in the route specified in the Route Name input box.
   let rightColumnEl
   let schemaContainerEl
   let crudSupportDoneEl
+    // the two input boxes for route name and fieldName, which is
+  // used repeatedly for making Candidate Fields
+  let routeNameEl
+  let fieldNameEl
+  let msgEl
+  let fieldsModel
 
   // Fires only one time
   // based on two variables noPrismaSchemaL and installPartTwoPending
@@ -2629,6 +2771,7 @@ created in the route specified in the Route Name input box.
   window.addEventListener('load', function () {
     // vscode.postMessage({ command: 'log', text: 'WINDOW LOAD EVENT CALLED' })
 
+    
     crudUIBlockEl  = document.getElementById('crudUIBlockId')
     rightColumnEl = document.getElementById('rightColumnId')
     installPartOneEl = document.getElementById('installPartOneId')
@@ -2639,6 +2782,18 @@ created in the route specified in the Route Name input box.
     cancelPartTwoBtnEl = document.getElementById('cancelPartTwoBtnId')
     schemaContainerEl = document.getElementById('schemaContainerId')
     crudSupportDoneEl = document.querySelector('.crud-support-done')
+    routeNameEl = document.getElementById('routeNameId')
+    fieldNameEl = document.getElementById('fieldNameId')
+    // TODO clear this test
+    setTimeout(() => {
+      fieldNameEl.value = 'firstName: String';
+      fieldNameEl.dispatchEvent(enterKeyEvent);
+    }, 0)
+    msgEl = document.getElementById('messagesId')
+    // TODO remove this test code
+    msgEl.addEventListener('dblclick', (event) => {
+      msgEl.innerHTML = 'Messages:'
+    })
 
     if (noPrismaSchemaL){
       installPartOneBtnEl.addEventListener('click', () => {
@@ -2678,16 +2833,21 @@ created in the route specified in the Route Name input box.
 
 
   function closeSchemaModels(){
-    const children = schemaContainerEl.children
-    for (let i = 0; i < children.length; i++) {
-      const det = children[i]
-      if (det.hasAttribute('open')) {
-        det.removeAttribute('open')
+    routeNameEl.value = '';
+    fieldNameEl.value = '';
+    setTimeout(() => {
+      const children = schemaContainerEl.children;
+      for (let i = 0; i < children.length; i++) {
+        const det = children[i];
+        if (det.hasAttribute('open')) {
+          det.removeAttribute('open');
+        }
       }
-    }
-    fields = []
-    // fieldNameEl.value = 'password: string'
+      fields = [];
+      fieldsListEl.innerHTML = '';
+    },0)
   }
+
   function attachPartTwoButtons() {
     installPartTwoBtnEl.removeEventListener('click')
     installPartTwoBtnEl.addEventListener('click', () => {
@@ -2707,7 +2867,7 @@ created in the route specified in the Route Name input box.
     }
   });
 
-  // Listen for extension messages
+  // Listen for extension messagesId
   window.addEventListener("message", event => {
     
     const msg = event.data
@@ -2739,8 +2899,18 @@ created in the route specified in the Route Name input box.
     }
     if (msg.command === 'renderSchema') {
       // vscode.postMessage({command: 'log',  text: 'EXT: renderSchema' });
-      renderParsedSchema(msg.payload)
-      rootPath = msg.rootPath
+      renderParsedSchema(msg.payload);
+      rootPath = msg.rootPath;
+      fieldsModel = msg.modelsFieldNames;
+      // fillOutCandidateFields(fieldsModel)
+      // TODO remove this test ---------
+      let fields =  ''
+      const usr = 'User'
+      fieldsModel[usr].forEach(fName => {
+        fields += '<br/>' + fName
+      })
+      msgEl.innerHTML += '<br/>' + fieldsModel ? fields : 'no fieldModels received';
+      // end test ----------------------
     }
     if(msg.command === 'taskError'){
       vscode.postMessage({command: 'log',  text: 'EXT: Prisma installation err '+ msg.error});
@@ -2756,15 +2926,7 @@ created in the route specified in the Route Name input box.
       renderField(fieldName)
     }
   }
-  // to send to an input box the Enter key up we need an event to dispatch
-  const enterKeyEvent = new KeyboardEvent('keyup', {
-    key: 'Enter',
-    code: 'Enter',
-    keyCode: 13,
-    which: 13,
-    bubbles: true
-  })
-
+  
   function dateTimeToDate(type) {
     if (type === 'DateTime') {
       return 'Date'
@@ -2800,18 +2962,17 @@ created in the route specified in the Route Name input box.
         setTimeout(() => {
           textNodes[0].textContent = nodeText;
           label.style.color = '';
-        }, 5000)
+        }, duration)
       }
   }
-
+  
   // a parsed schema from a Prisma ORM is sent back from the extension
   // and as it is an HTML collection we turn it into an Object with
   // entries to be destructed into individual object properties
   function renderParsedSchema(schemaModels) {
-    
+
     function addFieldnameToCandidateList(el){
       const fieldName = el.innerText
-      vscode.postMessage({command:'log', text: fieldName})
       // let type = el.nextSibling.innerText.match(/type:\\s*(\\w+)/)?.[1];
       let type = dateTimeToDate(el.nextSibling.innerText.match(/type:(\\S+)/)?.[1])
       if (!'String|Number|Boolean|Role'.includes(type)) {
@@ -2820,6 +2981,7 @@ created in the route specified in the Route Name input box.
 
       // the standard procedure for entering a new fieldname is via input box + Enter
       if (el.tagName === 'P' && el.nextSibling.tagName === 'P' && !fields.includes(fieldName)) {
+
         // keep inputbox value so preserve it if any and restore it after
         const savedEntry = fieldNameEl.value
         fieldNameEl.value = \`\${fieldName}: \${type}\`
@@ -2868,8 +3030,8 @@ created in the route specified in the Route Name input box.
           <div class='fields-column'>\${m}</div>
           </details>\`
       }
-      includeTypes = includeTypes.slice(0, -2) + ' }  from '$lib/types/types';
-
+      includeTypes = includeTypes.slice(0, -2) + \` }  from '\$lib/types/types';
+  \`
       vscode.postMessage({ command: 'saveTypes', payload: types, includeTypes })
     } catch (err) {
       vscode.postMessage({command: 'log',  text: 'renderParsedSchema: ' + err });
@@ -2882,55 +3044,109 @@ created in the route specified in the Route Name input box.
     schemaContainerEl.addEventListener('click', (event) => {
 
       if (event.target.tagName === 'SUMMARY') {
-        if (event.target.closest('details').open) return;
         routeNameEl.value = event.target.innerText.toLowerCase()
         routeNameEl.focus()
         routeNameEl.click()
-        changeLabelText('routeNameId', 'pink', 'Change Route Name if necessary', 5000)
-        fieldNameEl.value = 'surprise!'
-        // putDetailsFieldsToCandidateFields(event.target)
         const details = event.target.closest('details');
         if (details.open) {
-          fieldNameEl.value = 'closing a model'
-          return;   // user is closing the details
+          // setTimeout(() => {
+            closeSchemaModels();
+          // },200)
+          return;
         }
-        if (details){
-          fieldNameEl.value = 'details acquired'
-          const children = details.children[1].children;
-          fieldNameEl.value += ' -- '+ children.length
-          const children = details.children[1]?.children;
-          fieldNameEl.value = 'OK # is ' + children.length;
-          // for (let i = 0; i < children.length; i++) {
-          //   let s = children[i + 1]?.innerHTML.replace(/([^:]+:)\s*?([a-zA-Z0-9_\[\]]+)(.*)$/, '$2')
-          //   s = capF(s)
-          //   let fieldName = children[i].innerHTML + ': ' + s
-          //   fieldNameEl.value += fieldName
-          //   i++
-          //   // console.log(fieldName)
-          // }
-            // render(fieldName)
-            // const savedEntry = fieldNameEl.value
-            // fieldNameEl.value = fieldName
-            // fieldNameEl.dispatchEvent(enterKeyEvent)
-            // fieldNameEl.value = savedEntry
+        changeLabelText('routeNameId', 'pink', 'Change Route Name if necessary', 3000)
+        //----------------
+        // fillOutCandidateFields()
+        // return
+        //----------------
+        // const msgEl = document.getElementById('messagesId')
+        let arr = Object.entries(schemaModels).join('|')
+        arr = arr.replace(/,..bject .bject./g,'');
+        // routeNameEl.value = arr
+        msgEl.innerHTML += '<br/> modelNames  string '+ arr;
+        const children = details.children[1].children;
+        const savedEntry = fieldNameEl.value;
+        msgEl.innerHTML += '<br/>children# '+ children.length;
+        for (let i = 0; i < children.length; i++) {
+          const fieldName = children[i].innerHTML.replace(/DateTime/, 'Date').replace(/.*?(password).*/, 'password');
+
+          msgEl.innerHTML += '<br/>fieldName: '+ fieldName +' children[i+1]: '+ children[i+1].innerHTML;
+          try{
+            msgEl.innerHTML += '<br/>before children[i+1] match';
+            let match = children[i+1].innerHTML.match(/\s*?type:([a-zA-Z0-9_]+)(.*)$/);
+            msgEl.innerHTML += '<br/>fieldName: '+ fieldName +' match[1]: '+ match[1] +', match[2]: '+ match[2];
+            const type = match[1].replace(/DateTime/, 'Date');
+            msgEl.innerHTML += '<br/>fieldName: '+ fieldName +' type: '+ type +' match[1]: '+ match[1] +', match[2]: '+ match[2];
+
+            // msgEl.innerHTML += '<br/>'+ type.toLowerCase()
+            if ( type === null ) {
+              i++
+              continue
+            };
+            const prismaAttrs = match[2];
+            let include = false;
+            // msgEl.innerHTML += '<br/>prismaAttrs: '+ prismaAttrs;
+            if (prismaAttrs) {
+              const hasRole = type === 'Role';
+              // msgEl.innerHTML += '<br/> hasRole: '+ hasRole;
+              // if brackets with space 'Article[  ]' tighten the brackets temporarily
+              const hasBrackets = match[2].includes('[]');
+              // msgEl.innerHTML += '<br/> hasBrackets: '+ hasBrackets;
+
+              // for brackets with space Article[  ] js cannot handle regex test
+              // const hasBrackets = /.*?\[\s*?\]/.test(match[2])
+
+              const hasTwoAt = fieldName.includes('@@');
+              // msgEl.innerHTML += '<br/> hasTwoAt: '+ hasTwoAt;
+              const hasId = prismaAttrs.includes('@id');
+              // msgEl.innerHTML += '<br/> hasId: '+ hasId;
+              const attrsHasAt = prismaAttrs.match(/@default|@default(now())|@unique|@createdAt/) !== null;
+              // msgEl.innerHTML += '<br/> attrsHasAt: '+ attrsHasAt;
+              // include = (attrsHasAt && !hasRole && hasTwoAt && !hasId) || hasBrackets;
+              
+              include = !attrsHasAt && !hasTwoAt && !hasBrackets || hasId || hasRole;
+              // msgEl.innerHTML += '<br/> include: '+ include;
+
+            }
+            //   msgEl.innerHTML += '<br/> @attributes: '+ attrsHasAt +' hasRole: '+ hasRole +' hasTwoAt: '+ hasTwoAt +' hasId: '+ hasId +' hasBrackets: '+ hasBrackets +'<br/>';
+            if (include){
+              msgEl.innerHTML += '<br/> dispatch ' + fieldName;
+              if (!arr.includes(type)){
+                fieldNameEl.value = fieldName +': '+ type;
+                fieldNameEl.dispatchEvent(enterKeyEvent)
+              }
+            }else{
+              msgEl.innerHTML += '<br/> nothing to dispatch'
+            }
+          }finally{
+            // msgEl.innerHTML += '<br/>finally<br/><br/>'
+          }
+          i += 1
         }
+        fieldNameEl.value = savedEntry
         return
       }
-      const el = event.target
-      const fieldName = el.innerText
+      
+      // user clicked on a field name
+      const el = event.target;
+      const fieldName = el.innerText;
+      // ----------------------------------------
+      msgEl.innerHTML+= '<br/>click on a field name '+ fieldName;
+      // ----------------------------------------
       // let type = el.nextSibling.innerText.match(/type:\\s*(\\w+)/)?.[1];
       let type = dateTimeToDate(el.nextSibling.innerText.match(/type:(\\S+)/)?.[1])
       // vscode.postMessage({command: 'log',  text: ('clicked type', type) });
       if (!'String|Number|Boolean'.includes(type)) {
         return
       }
-
+      msgEl.innerHTML+= '<br/>'
       // the click is not on a SUMMARY, so a field name is clicked
       // the standard procedure for entering a new fieldname is via input box + Enter
       if (el.tagName === 'P' && el.nextSibling.tagName === 'P' && !fields.includes(fieldName)) {
         // we need input box so preserve its entry if any and restore after
         const savedEntry = fieldNameEl.value
-        fieldNameEl.value = \`\${fieldName}: \${type}\`
+        fieldNameEl.value = \`\${fieldName}: \${type}\`;
+        msgEl.innerHTML+= '<br/>backticks fieldName.value '+ fieldNameEl.value;
         fieldNameEl.dispatchEvent(enterKeyEvent)
         fieldNameEl.value = savedEntry
       }
@@ -2984,11 +3200,6 @@ created in the route specified in the Route Name input box.
     return val
   }
 
-  // the two input boxes for route name and fieldName, which is
-  // used repeatedly for making Candidate Fields
-  const routeNameEl = document.getElementById('routeNameId')
-  const fieldNameEl = document.getElementById('fieldNameId')
-
   const fieldsListEl = document.getElementById('fieldsListId')
   const createBtnEl = document.getElementById('createBtnId')
 
@@ -3003,10 +3214,10 @@ created in the route specified in the Route Name input box.
 
   if (fieldNameEl) {
     fieldNameEl.addEventListener('keyup', (event) => {
-      // vscode.postMessage({command: 'log',  text: 'fieldNameEl.addEventListener created' });
+      // msgEl.innerHTML+= '<br/>keyup fieldNameEl.addEventListener created';
       let v = fieldNameEl.value.trim().replace(/\\bstring\\b/, 'String')
       if (!v) {
-        // vscode.postMessage({command: 'log',  text: 'field is empty' });
+        // msgEl.innerHTML+= '<br/>keyup field is empty';
         return
       }
       v = adjustFiledNameAndType(v)
@@ -3025,13 +3236,13 @@ created in the route specified in the Route Name input box.
       renderField(v)
       fieldNameEl.value = ''
       scroll(fieldsListEl)
+      // msgEl.innerHTML+= '<br/>keyup final reached';
     })
   }
 // we do not clear all the entries and rebuild from the fields
   // but just add a newly entered in the Field Name fieldNameId
   function renderField(fieldName) {
-    // vscode.postMessage({ command:'log', text: 'render '+ fieldName})
-    // internal sub-function
+
     const fieldNameFromIndex = (index) => {
       const listEls = fieldsListEl.querySelectorAll('.list-el')
       let name = ''

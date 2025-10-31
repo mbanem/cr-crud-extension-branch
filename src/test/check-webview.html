@@ -6,7 +6,7 @@
   <style>
     .main-grid {
       display: grid;
-      grid-template-columns: 33rem 12rem;
+      grid-template-columns: 33rem 20rem;
     }
 
     .grid-wrapper {
@@ -411,11 +411,9 @@ created in the route specified in the Route Name input box.
   // Webview Extension
   let tablesModel = 'waiting for schemaModels '
   let rootPath = ''
-  const vscode = acquireVsCodeApi()
+  // const vscode = acquireVsCodeApi()
   const noPrismaSchemaL = false
   const installPartTwoPending = false
-
-  // let noSchemaText = 'based on variable noPrismaSchema got from getWebviewContent ' + noPrismaSchemaL ? 'FOUND NO SCHEMA' : 'YES, SCHEMA FOUND'
 
   function installPartTwo() {
     // vscode.postMessage({ command: 'installPrismaPartTwo' })
@@ -473,17 +471,17 @@ created in the route specified in the Route Name input box.
     // vscode.postMessage({ command: 'log', text: 'BEFORE TURNING PARTS VISIBLE' })
 
     if (noPrismaSchemaL) {
-      console.log('console.log -- show noPrismaSchemaL')
+      console.log('console.log -- noPrismaSchemaL')
       // all blocks start hidden
       installPartOneEl.classList.remove('hidden')
     }
     else if (installPartTwoPending) {
-      console.log('console.log -- show installPartTwoPending')
+      console.log('console.log -- installPartTwoPending')
       installPartTwoEl.classList.remove('hidden')
       // vscode.postMessage({ command: 'log', text: 'PRISMA PART TWO INSTALLATION' })
     }
     else {
-      console.log('console.log -- show Create CRUD Support')
+      console.log('console.log -- Create CRUD Support')
       // setTimeout(() => {
       crudUIBlockEl.classList.remove('hidden')
       rightColumnEl.classList.remove('hidden')
@@ -593,7 +591,16 @@ created in the route specified in the Route Name input box.
   let routeName = ''
 
   function changeLabelText(id, color, text, duration) {
+    // vscode.postMessage({command:'log', text: 'changeLabelText entry point'+id})
+    // const selector = "label[for='"+ id +"']"
+    // const label = document.querySelector("label[for='routeNameId']");
     const label = document.querySelector("label[for='" + id + "']")
+
+    // if(label){
+    //   vscode.postMessage({command:'log', text: 'querySelector FOUND label'})
+    // }else{
+    //     vscode.postMessage({command:'log', text: 'querySelector NO LABEL FOUND'})
+    // }
     // Filter for text nodes only (excludes the <input> element)
     const textNodes = Array.from(label.childNodes).filter(
       (node) => node.nodeType === Node.TEXT_NODE
@@ -609,7 +616,7 @@ created in the route specified in the Route Name input box.
       setTimeout(() => {
         textNodes[0].textContent = nodeText
         label.style.color = ''
-      }, duration)
+      }, 10000)
     }
   }
 
@@ -681,7 +688,7 @@ created in the route specified in the Route Name input box.
   `
       // vscode.postMessage({ command: 'saveTypes', payload: types, includeTypes })
     } catch (err) {
-      // vscode.postMessage({command: 'log',  text: 'renderParsedSchema: ' + err });
+      // vscode.postMessage({ command: 'log', text: 'renderParsedSchema: ' + err })
     }
     // now all the markup constructed as a string render into  schemaContainerEl
     schemaContainerEl.innerHTML = markup

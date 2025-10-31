@@ -33,18 +33,18 @@ internal user table so we use plural instead.
 */`
 
 const envWhatToDo = `# Environment variables declared in this file are automatically made available to Prisma.
-# See the documentation for more detail: https://pris.ly/d/prisma-schema#accessing-environment-variables-from-the-schema
+// See the documentation for more detail: https://pris.ly/d/prisma-schema//accessing-environment-variables-from-the-schema
 
-# Prisma supports the native connection string format for PostgreSQL, MySQL, SQLite, SQL Server, MongoDB and CockroachDB.
-# See the documentation for all the connection string options: https://pris.ly/d/connection-strings
+// Prisma supports the native connection string format for PostgreSQL, MySQL, SQLite, SQL Server, MongoDB and CockroachDB.
+// See the documentation for all the connection string options: https://pris.ly/d/connection-strings
 
-# example is for PostgreSQL, change values wrapped in < >
-# <username> is a Role in PostgreSQL
-# <password> is username's db password
-# <dbName> is database name to connect to
-DATABASE_URL="postgresql://<username>:<password>@localhost:5432/<dbName>?schema=public"
+// example is for PostgreSQL, change values wrapped in
+// username is a Role in PostgreSQL
+// password is username's db password
+// dbName is database name to connect to
+DATABASE_URL="postgresql://username:password@localhost:5432/dbName?schema=public"
 
-# see docs for how to use SECRET_API_KEYs
+// see docs for how to use SECRET_API_KEYs
 SECRET_APT_KEY="kiki:kiki@localhost:5432
 SECRET_APT_ENV=development
 SECRET_API_KEY=1234567890`;
@@ -1814,6 +1814,14 @@ async function findPrismaSchemaRoot(): Promise<string | null> {
     [modelName: string]: ModelInfo;
   };
 
+  // {} has [key,value] easy to select a model via key
+  // for (const [modelName, fields] of Object.entries(models)) {   // iterating
+  type Models = {
+    [modelName: string]: string[];
+  }
+  const modelsFieldNames: Models = {};  
+  let strModelNames = '|'
+
   function parsePrismaSchema(schemaContent: string): SchemaModels {
     const models: SchemaModels = {};
     const modelRegex = /model\s+(\w+)\s*{([^}]*)}/gms;
@@ -1855,6 +1863,72 @@ async function findPrismaSchemaRoot(): Promise<string | null> {
     };
   }
   
+  /* 
+    This function returns models as SchemaModels so use it to populate above Models
+    for data entry fields avoid fieldNames that are
+    models itself like Todo, Profile, containing @@ chars 
+    and some of @unique, @default, @default(now(), modelName), @relation
+  */
+  // make a string-list of modelNames like '|Todo|User|Profile|'
+  for (const [modelName, theFields] of Object.entries(models)) {
+    strModelNames += modelName +'|'
+  }
+  /*
+    modelsFieldNames['User'] holds
+    email: String 
+    firstName: String 
+    id: String 
+    lastName: String 
+    password: String 
+    profile: Profile?         -- incorrect as model name
+    role: Role 
+    updatedAt: DateTime? 
+    userAuthToken: String     -- incorrect @unique
+
+  */
+  for (const [modelName, theFields] of Object.entries(models)) {
+    let arrFields = []
+    const [, fields] = Object.entries(theFields)[0]
+      for (let [fieldName, { type, prismaSetting }] of Object.entries(fields)) {
+        if ('0|1'.includes(fieldName)) continue
+        // type could be optional, so remove ? if any as it cannot match model name
+        type = type.replace(/\?/g, '')
+        if (fieldName.includes('password')){  // passwordHash or similar
+          fieldName = 'password'
+        }
+        if (type=='DateTime'){
+          type = 'Date';
+        }
+        // exclude this field names
+        const pattern = '@default\\((' + strModelNames +'now\\(\\))\\)';
+        let regex = new RegExp(pattern);
+        let m = prismaSetting.match(regex);   // null if failed
+        if(m && m[1]) continue;               // not data entry field name
+
+        // type cannot be a model name like Profile...
+        regex = new RegExp('('+ strModelNames.slice(1,-1) +')');
+        m = type.match(regex);   // null if failed
+        if (m && m[1]) continue
+
+        m = prismaSetting.match(/(@unique|@createdAt)/);  // non-mutable
+        if(m && m[1]) continue;
+
+        const hasBrackets = type.includes('[]');
+        const hasId = prismaSetting.includes('@id');
+        const hasRole = type === 'Role';
+        const include = !hasBrackets || hasId || hasRole;
+        if (include){
+          arrFields.push(fieldName + ': '+ type)
+        }
+    }
+    try{
+      modelsFieldNames[modelName] = arrFields;
+    }catch(err){
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log('cannot add a model'+ msg)
+    }
+  }
+
   return models;
 }
 
@@ -1986,6 +2060,7 @@ export async function activate(context: vscode.ExtensionContext) {
           const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
           if (!workspaceFolder) {
             vscode.window.showErrorMessage('No workspace folder open');
+            // TODO send to output how to make a Workspace
             return;
           }
 
@@ -2065,13 +2140,27 @@ export async function activate(context: vscode.ExtensionContext) {
           const schemaContent = fs.readFileSync(prismaSchemaPath, "utf-8");
 
           const parsedSchema = parsePrismaSchema(schemaContent);
+          try{
+            if(modelsFieldNames){
+              outputChannel.appendLine('modelsFieldNames found'); outputChannel.show();
+              outputChannel.appendLine('strModelNames:' + strModelNames); outputChannel.show();
 
+              // outputChannel.appendLine(JSON.stringify(modelsFieldNames,null,2)); outputChannel.show();
+
+            } else {
+              outputChannel.appendLine('modelsFieldNames NOT found'); outputChannel.show();
+            }
+          }catch(err){
+            const msg = err instanceof Error ? err.message : String(err);
+            outputChannel.appendLine('No modelsFieldNames found '+ msg);  outputChannel.show();
+          }
           // TODO: parse schemaContent and send back to WebView
           // ---------------------- JSON parser schemaModels via command sendingSchemaModel  ----------------------
           panel.webview.postMessage({
             command: "renderSchema",
             payload: parsedSchema,
-            rootPath: rootPath
+            rootPath: rootPath,
+            modelsFieldNames
           });
           // vscode.window.showErrorMessage('This is a test vscode.window.showErrorMessage');
         } catch (error) {
@@ -2136,8 +2225,8 @@ export async function activate(context: vscode.ExtensionContext) {
         if (!fs.existsSync(appTypesPath)) {
           fs.mkdirSync(appTypesPath, { recursive: true });
         }
-        includeTypes = msg.includeTypes;
-        vscode.window.showInformationMessage(includeTypes)
+        // includeTypes = msg.includeTypes;
+        // vscode.window.showInformationMessage(includeTypes)
         const types = `
   // CRAppTypes from schema.prisma
   export type Role = 'USER' | 'ADMIN' | 'VISITOR';
@@ -2551,7 +2640,7 @@ created in the route specified in the Route Name input box.
         </label>
         <button id="createBtnId" disabled>Create CRUD Support</button>
         <div class='crud-support-done hidden'></div>
-        <!-- <div id='messages' style='z-index:10;width:20rem;'>Messages:</div> -->
+        <div id='messagesId' style='z-index:10;width:20rem;'>Messages:</div>
       </div>
 
       <div class='middle-column'>
@@ -2622,6 +2711,10 @@ created in the route specified in the Route Name input box.
   let rightColumnEl
   let schemaContainerEl
   let crudSupportDoneEl
+  let fieldModelsJSON
+  let fieldModels
+  let msgEl
+  let timer
 
   // Fires only one time
   // based on two variables noPrismaSchemaL and installPartTwoPending
@@ -2640,6 +2733,11 @@ created in the route specified in the Route Name input box.
     cancelPartTwoBtnEl = document.getElementById('cancelPartTwoBtnId')
     schemaContainerEl = document.getElementById('schemaContainerId')
     crudSupportDoneEl = document.querySelector('.crud-support-done')
+    msgEl = document.getElementById('messagesId')
+    msgEl.addEventListener('dblclick', () => {
+      msgEl.innerHTML = ''
+    })
+
 
     if (noPrismaSchemaL){
       installPartOneBtnEl.addEventListener('click', () => {
@@ -2679,15 +2777,19 @@ created in the route specified in the Route Name input box.
 
 
   function closeSchemaModels(){
-    const children = schemaContainerEl.children
-    for (let i = 0; i < children.length; i++) {
-      const det = children[i]
-      if (det.hasAttribute('open')) {
-        det.removeAttribute('open')
+    routeNameEl.value = '';
+    fieldNameEl.value = '';
+    setTimeout(() => {
+      const children = schemaContainerEl.children
+      for (let i = 0; i < children.length; i++) {
+        const det = children[i]
+        if (det.hasAttribute('open')) {
+          det.removeAttribute('open')
+        }
       }
-    }
-    fields = []
-    // fieldNameEl.value = 'password: string'
+      fields = []
+      fieldsListEl.innerHTML = '';
+    },0)
   }
   function attachPartTwoButtons() {
     installPartTwoBtnEl.removeEventListener('click')
@@ -2741,8 +2843,26 @@ created in the route specified in the Route Name input box.
     if (msg.command === 'renderSchema') {
       // vscode.postMessage({command: 'log',  text: 'EXT: renderSchema' });
       renderParsedSchema(msg.payload)
-      rootPath = msg.rootPath
+      rootPath = msg.rootPath,
+      fieldModels= msg.modelsFieldNames
     }
+    // msgEl.innerHTML += '<br/>Ext to Webview: on renderSchema got fieldModels';
+    // try{
+    //   msgEl.innerHTML += '<br/>in try with fieldModels'
+    //   if (fieldModels){
+    //     msgEl.innerHTML += '<br/>Ext to Webview: on renderSchema fieldModels object exists'
+    //     const fields = fieldModels['User'];
+    //     msgEl.innerHTML += '<br/>USER fields: '+ fields.join(',');
+    //     for (let i=0; i < fields.length; i++){
+    //       msgEl.innerHTML += '<br/>'+ fields[i];
+    //     }
+    //   }else{
+    //     msgEl.innerHTML += '<br/>NO fieldModels';
+    //   }
+    // }catch(err){
+    //   const msg = typeof err ==='object' ? err.message : String(err);
+    //   msgEl.innerHTML += '<br/>catch on parse: '+ err;
+    // }
     if(msg.command === 'taskError'){
       vscode.postMessage({command: 'log',  text: 'EXT: Prisma installation err '+ msg.error});
     }
@@ -2774,18 +2894,10 @@ created in the route specified in the Route Name input box.
   }
 
   let routeName = ''
-
+  
   function changeLabelText(id, color, text, duration){
-    // vscode.postMessage({command:'log', text: 'changeLabelText entry point'+id})
-    // const selector = "label[for='"+ id +"']"
-    // const label = document.querySelector("label[for='routeNameId']");
     const label = document.querySelector("label[for='"+ id +"']");
-    
-    // if(label){
-    //   vscode.postMessage({command:'log', text: 'querySelector FOUND label'})
-    // }else{
-    //     vscode.postMessage({command:'log', text: 'querySelector NO LABEL FOUND'})
-    // }
+  
     // Filter for text nodes only (excludes the <input> element)
     const textNodes = Array.from(label.childNodes).filter(
       (node) => node.nodeType === Node.TEXT_NODE
@@ -2798,36 +2910,48 @@ created in the route specified in the Route Name input box.
         // vscode.postMessage({command:'log', text: 'found textNode '+ nodeText})
         textNodes[0].textContent = text;
         label.style.color = color;
-        setTimeout(() => {
+        timer = setTimeout(() => {
           textNodes[0].textContent = nodeText;
           label.style.color = '';
-        }, 10000)
+        }, duration)
       }
   }
-  
+function clearLabelText(){
+  // clearTimeout(timer);
+  // msgEl.innerHTML += '<br/>clearLabelText';
+  const label = document.querySelector("label[for='"+ id +"']");
+  const textNodes = Array.from(label.childNodes).filter(
+      (node) => node.nodeType === Node.TEXT_NODE
+      );
+  if (textNodes.length > 0) {
+    label.style.color = '';
+    textNodes[0].textContent = 'Route Name';
+  }
+}
+
   // a parsed schema from a Prisma ORM is sent back from the extension
   // and as it is an HTML collection we turn it into an Object with
   // entries to be destructed into individual object properties
   function renderParsedSchema(schemaModels) {
 
-    function addFieldnameToCandidateList(el){
-      const fieldName = el.innerText
-      vscode.postMessage({command:'log', text: fieldName})
-      // let type = el.nextSibling.innerText.match(/type:\\s*(\\w+)/)?.[1];
-      let type = dateTimeToDate(el.nextSibling.innerText.match(/type:(\\S+)/)?.[1])
-      if (!'String|Number|Boolean|Role'.includes(type)) {
-        return
-      }
+    // function addFieldnameToCandidateList(el){
+    //   const fieldName = el.innerText
+    //   vscode.postMessage({command:'log', text: fieldName})
+    //   // let type = el.nextSibling.innerText.match(/type:\\s*(\\w+)/)?.[1];
+    //   let type = dateTimeToDate(el.nextSibling.innerText.match(/type:(\\S+)/)?.[1])
+    //   if (!'String|Number|Boolean|Role'.includes(type)) {
+    //     return
+    //   }
 
-      // the standard procedure for entering a new fieldname is via input box + Enter
-      if (el.tagName === 'P' && el.nextSibling.tagName === 'P' && !fields.includes(fieldName)) {
-        // keep inputbox value so preserve it if any and restore it after
-        const savedEntry = fieldNameEl.value
-        fieldNameEl.value = \`\${fieldName}: \${type}\`
-        fieldNameEl.dispatchEvent(enterKeyEvent)
-        fieldNameEl.value = savedEntry
-      }
-    }
+    //   // the standard procedure for entering a new fieldname is via input box + Enter
+    //   if (el.tagName === 'P' && el.nextSibling.tagName === 'P' && !fields.includes(fieldName)) {
+    //     // keep inputbox value so preserve it if any and restore it after
+    //     const savedEntry = fieldNameEl.value
+    //     fieldNameEl.value = \`\${fieldName}: \${type}\`
+    //     fieldNameEl.dispatchEvent(enterKeyEvent)
+    //     fieldNameEl.value = savedEntry
+    //   }
+    // }
 
     let markup = ''
     let types = ''
@@ -2849,7 +2973,6 @@ created in the route specified in the Route Name input box.
 
         for (const [fieldName, { type, prismaSetting }] of Object.entries(fields)) {
           if ('0|1'.includes(fieldName)) continue
-          if (fieldName.includes('password'))
           types += \`\${fieldName}: \${dateTimeToDate(type)};
     \`
           if (prismaSetting.includes('@default') || prismaSetting.includes('@updatedAt') || prismaSetting.includes('@unique')) {
@@ -2883,95 +3006,54 @@ created in the route specified in the Route Name input box.
     schemaContainerEl.addEventListener('click', (event) => {
 
       if (event.target.tagName === 'SUMMARY') {
-        routeNameEl.value = event.target.innerText.toLowerCase()
+        const modelName = event.target.innerText;
+        routeNameEl.value = modelName.toLowerCase();
         routeNameEl.focus()
         routeNameEl.click()
         const details = event.target.closest('details');
         if (details.open) {
+          closeSchemaModels();
+          clearLabelText();
           return;
         }
         changeLabelText('routeNameId', 'pink', 'Change Route Name if necessary', 4000)
         //----------------
-        // const msgEl = document.getElementById('messages')
-        let arr = Object.entries(schemaModels).join('|')
-        arr = arr.replace(/,..bject .bject./g,'');
-        // routeNameEl.value = arr
-
-        const children = details.children[1].children;
-        const savedEntry = fieldNameEl.value;
-        // msgEl.innerHTML = 'children# '+ children.length;
-        for (let i = 0; i < children.length; i++) {
-          const fieldName = children[i].innerHTML.replace(/DateTime/, 'Date').replace(/.*?(password).*/, 'password');
-          // if password is included by opening ModelName SUMMARY clear if from fieldNameEl
-          if (fieldName === 'password'){
-            fieldNameEl.value = ''
-          }
-          // msgEl.innerHTML += '<br/>fieldName: '+ fieldName +' children[i+1]: '+ children[i+1].innerHTML;
+        let theFields = [];
+        if (fieldModels){
+          msgEl.innerHTML += '<br/>SUMMARY fieldModels found: '+ JSON.stringify(fieldModels) + ' modelName: '+ modelName;
+          
           try{
-            // msgEl.innerHTML += '<br/>before children[i+1] match';
-            let match = children[i+1].innerHTML.match(/\s*?type:([a-zA-Z0-9_]+)(.*)$/);
-            // msgEl.innerHTML += 'fieldName: '+ fieldName +' match[1]: '+ match[1] +', match[2]: '+ match[2];
-            const type = match[1].replace(/DateTime/, 'Date');
-            // msgEl.innerHTML += 'fieldName: '+ fieldName +' type: '+ type +' match[1]: '+ match[1] +', match[2]: '+ match[2];
-
-            // msgEl.innerHTML += '<br/>'+ type.toLowerCase()
-            if ( type === null ) {
-              i++
-              continue
-            };
-            const prismaAttrs = match[2];
-            let include = false;
-            // msgEl.innerHTML += '<br/>prismaAttrs: '+ prismaAttrs;
-            if (prismaAttrs) {
-              const hasRole = type === 'Role';
-              // msgEl.innerHTML += '<br/> hasRole: '+ hasRole;
-              // if brackets with space 'Article[  ]' tighten the brackets temporarily
-              const hasBrackets = match[2].includes('[]');
-              // msgEl.innerHTML += '<br/> hasBrackets: '+ hasBrackets;
-
-              // for brackets with space Article[  ] js cannot handle regex test
-              // const hasBrackets = /.*?\[\s*?\]/.test(match[2])
-
-              const hasTwoAt = fieldName.includes('@@');
-              // msgEl.innerHTML += '<br/> hasTwoAt: '+ hasTwoAt;
-              const hasId = prismaAttrs.includes('@id');
-              // msgEl.innerHTML += '<br/> hasId: '+ hasId;
-              const attrsHasAt = prismaAttrs.match(/@default|@default(now())|@unique|@createdAt/) !== null;
-              // msgEl.innerHTML += '<br/> attrsHasAt: '+ attrsHasAt;
-              // include = (attrsHasAt && !hasRole && hasTwoAt && !hasId) || hasBrackets;
-              
-              include = !attrsHasAt && !hasTwoAt && !hasBrackets || hasId || hasRole;
-              // msgEl.innerHTML += '<br/> include: '+ include;
-
-            }
-            //   msgEl.innerHTML += '<br/> @attributes: '+ attrsHasAt +' hasRole: '+ hasRole +' hasTwoAt: '+ hasTwoAt +' hasId: '+ hasId +' hasBrackets: '+ hasBrackets +'<br/>';
-            if (include){
-              // msgEl.innerHTML += '<br/> dispatch fieldName'
-              if (!arr.includes(type)){
-                fieldNameEl.value = fieldName +': '+ type;
-                fieldNameEl.dispatchEvent(enterKeyEvent)
+            msgEl.innerHTML += '<br/>before theFields = fieldModels.User'
+            theFields = Array.from(fieldModels[modelName]);
+            // msgEl.innerHTML += '<br/>made an assignment theFields = fieldModels.User';
+            if (theFields){
+              // msgEl.innerHTML += '<br/>fieldModels[modelName] found for modelName: '+modelName;
+              // msgEl.innerHTML += '<br/>JSON on the Fields: '+ JSON.stringify(theFields) + ' theFields.length '+ theFields.length;
+              for (let i=0; i < theFields.length; i++){
+                // msgEl.innerHTML += '<br/>theFields loop: '+ theFields[i];
+                fieldNameEl.value = theFields[i];
+                fieldNameEl.dispatchEvent(enterKeyEvent);
               }
-            }else{
-              // msgEl.innerHTML += '<br/> nothing to dispatch'
+              return
             }
-          }finally{
-            // msgEl.innerHTML += '<br/>finally<br/><br/>'
+          }catch(err){
+            const msg = err instanceof Error ? err.message : String(err);
+            msgEl.innerHTML += '<br/>fieldModels[modelName] NOT found err: '+ msg
           }
-          i += 1
+        }else{
+          msgEl.innerHTML += '<br/>SUMMARY fieldModels NOT found'
         }
-        fieldNameEl.value = savedEntry
-        return
       }
+      
+      // the click is not on a SUMMARY, so a field name is clicked
+      // msgEl.innerHTML += '<br/>the click is not on a SUMMARY'
       const el = event.target
       const fieldName = el.innerText
-      // let type = el.nextSibling.innerText.match(/type:\\s*(\\w+)/)?.[1];
       let type = dateTimeToDate(el.nextSibling.innerText.match(/type:(\\S+)/)?.[1])
-      // vscode.postMessage({command: 'log',  text: ('clicked type', type) });
       if (!'String|Number|Boolean'.includes(type)) {
         return
       }
 
-      // the click is not on a SUMMARY, so a field name is clicked
       // the standard procedure for entering a new fieldname is via input box + Enter
       if (el.tagName === 'P' && el.nextSibling.tagName === 'P' && !fields.includes(fieldName)) {
         // we need input box so preserve its entry if any and restore after
