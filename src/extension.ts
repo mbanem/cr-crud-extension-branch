@@ -6,7 +6,9 @@ import * as path from 'path';
 import * as child_process from 'child_process';
 
 let rootPath = '';
+let routesPath = '';
 let routeName_ ='';
+let routeCName = '';    // capitalized
 let fields_:string[]=[];
 let embellishments_:string[]=[];
 let terminal: vscode.Terminal | undefined;
@@ -14,7 +16,101 @@ let noPrismaSchema = false;
 let installPartTwoPending = false;
 let pm = 'unknown';
 let ex = 'unknown';
+// {} has [key,value] easy to select a model via key
+// for (const [modelName, fields] of Object.entries(models)) {   // iterating
+type Models = {
+  [modelName: string]: string[];
+}
+const modelsFieldNames: Models = {};
+function fNamesList(){
+  let fList = ``
+  for(const field of fields_){
+    fList += `${field.split(':')[0]}, `;
+  }
+  return fList.slice(0,-2)
+}
+function fieldTypeList(){
+  let fieldTypeList = ``
+  for(const field of fields_){
+    fieldTypeList += `${field}
+    `
+	}
+	return fieldTypeList.slice(0,-4);
+}
+function passwordHashAndToken(){
+	if (routeName_ !== 'user') return;
+	return `passwordHash: await bcrypt.hash(password, 10),
+				userAuthToken: crypto.randomUUID()
+		`.slice(0,-3)
+}
+function getServerPage(){
+  let imp = `import { db } from '$lib/server/db';
+import type { PageServerLoad } from './$types';
+import { error, fail, redirect } from '@sveltejs/kit';
+import type RequestEvent from '@sveltejs/kit';
+import type { Actions } from '@sveltejs/kit';
+import bcrypt from 'bcrypt'
+import * as utils from '$lib/utils';;
+import { fail } from '@sveltejs/kit';
 
+export const load: PageServerLoad = (async ({}) => {
+	const ${routeName_}s = await db.${routeName_}.findMany({
+		select:{
+      ${fNamesList().replace(/password,/,'').replace(/\s+/g, '').replace(/,/g, `: true,
+      `)+ ': true'}
+		}
+  });
+	if (! ${routeName_}s) {
+		return fail(400, { message: 'No  ${routeName_}s in db' });
+	}
+	return {
+		${routeName_}s
+	};
+}) satisfies PageServerLoad;
+
+export const actions: Actions = {
+	create: async ({ request }) => {
+    const { ${fNamesList()} } = Object.fromEntries(
+		// @ts-expect-error
+		await request.formData()
+	) as {
+    ${fieldTypeList()}
+	};
+	if (!(${fNamesList().replace(/,/g, ' &&')})) {
+		return fail(400, {
+			data: {
+				${fNamesList().replace(/password,?/,'')}
+			},
+			message: 'Insufficient data supplied'
+		})
+	}
+	const ${routeName_}Exists = await db.${routeName_}.findFirst({
+			where: {
+				${fNamesList()}
+			}
+		})
+		if (${routeName_}Exists) {
+			return fail(400, {
+				data: { ${fNamesList().replace(/password,?/,'')} },
+				message: 'Unacceptable data'
+			})
+		} else {
+			const ${routeName_} = await db.${routeName_}.create({
+				data: {
+					${fNamesList()},
+					${passwordHashAndToken()}
+				}
+			})
+		}
+		return {
+			success: true,
+			message: '${routeName_} created successfully'
+		}
+  }
+} satisfies Actions
+`
+	return imp;
+}
 const schemaWhatToDo = `/*
 MAKE YOUR PRISMA SCHEMA MODELS HERE
 As databases could have stronger requests for naming tables and columns
@@ -59,7 +155,7 @@ const sleep = async (ms: number) => {
     })
   }
 function createDBExportFile(){
-  const exportDbPath = path.join(rootPath, '/src/server/db.ts');
+  const exportDbPath = path.join(rootPath, '/src/lib/server/db.ts');
   if (!fs.existsSync(exportDbPath)){
     fs.writeFileSync(exportDbPath, `import { PrismaClient } from '@prisma/client';
 
@@ -241,13 +337,18 @@ function toArray(fields_: string[]){
   return fields;
 }
 */
-
+let theInitValues: string[] = [];
 function initValues(){
+  let updateFields = ``
+  let partialType = `type ${routeCName}Partial = {
+  id: string | null
+  `;
   let clean_snap = '';
   const fields: string[] = [];
   fields_.forEach(fName => {
     let [ , name, type] = fName.match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m); 
-
+    updateFields += `${name}: u.${name},
+          `
     clean_snap += name + `: null,
   `;
     if (!fields.includes('id:string')){
@@ -262,42 +363,62 @@ function initValues(){
       case 'string':{
         fields.push(`
   ${name}: null`);
+  if (name !== 'id'){
+  partialType += `${name}: string | null
+  `
+  }
         break;
       }
       case 'number':{
         fields.push(`
   ${name}: 0`);
+  partialType += `${name}: number | null
+  `
         break;
       }
       case 'date':{
         fields.push(`
   ${name}: null`);
+  partialType += `${name}: Date | null
+  `
         break;
       }
       case 'boolean':{
         fields.push(`
   ${name}: false`);
+  partialType += `${name}: boolean | null
+  `
         break;
       }
       case 'array':{
         fields.push(`
   ${name}: []`);
+  partialType += `${name}: array | []
+  `
         break;
       }
       case 'role':{
         fields.push(`
   ${name}: 'VISITOR'`);
+  partialType += `${name}: Types.Role | null
+  `
         break;
       }
       default:{
         fields.push(`
   ${name}: ${type}`);
+  partialType += `${name}: ${type} | null_xx
+  `
         break;
       }
     }
   })
   clean_snap = clean_snap.replace(/,\s*$/,'')
-  return clean_snap;
+  partialType = partialType.slice(0,-3) + `
+}`
+  updateFields = updateFields.replace(/u\.password/, "''").slice(0,-11);
+
+  theInitValues = [clean_snap, partialType, updateFields];
 }
 
 function nullType(fName:string){
@@ -311,11 +432,12 @@ function nullType(fName:string){
 }
 
 let importTypes = 'import type {';
-function createFormPage(includeTypes: string){
-  const plusPageSveltePath = path.join(rootPath as string, `/src/routes/${routeName_}`);
-  
-  if (!fs.existsSync(plusPageSveltePath)) {
-    fs.mkdirSync(plusPageSveltePath, { recursive: true });
+function createFormPage(includeTypes: string, outputChannel: any){
+  outputChannel.appendLine('createFormPage entry point routesPath: '+ routesPath); outputChannel.show();
+  const routeNamePath = path.join(routesPath, routeName_)
+  if (!fs.existsSync(routeNamePath)) {
+    outputChannel.appendLine('create routeNamePath: '+ routeNamePath); outputChannel.show();
+    fs.mkdirSync(routeNamePath, { recursive: true });
   }
 
   let inputBoxes = '';
@@ -335,13 +457,13 @@ if (embellishments_.includes('CRActivity')){
   cr_Activity = `<CRActivity
   PageName='${routeName_}'
   bind:result
-  bind:selectedUserId
-  user={data.locals.user}
-  users={data.users}
+  bind:selected${routeCName}Id
+  ${routeName_}={data.locals.${routeName_}}
+  ${routeName_}s={data.${routeName_}s}
 ></CRActivity>`
 }
   
-
+initValues();
 let plusPageSvelte = `<script lang="ts">
 // ${routeName_}/+page.svelte
 import type { Snapshot } from '../$types';
@@ -363,33 +485,32 @@ type ARGS = {
 };
 let { data, form }: ARGS = $props();
 
+${theInitValues[1]}
 let nullSnap = {
-  ${initValues()}
-} as UserPartial;
-let snap = $state<UserPartial>(data.locals.user ?? nullSnap);
+  ${theInitValues[0]}
+} as ${routeCName}Partial;
+
+
+let snap = $state<${routeCName}Partial>(data.locals.${routeName_} as ${routeCName}Partial ?? nullSnap);
 const snap_ = () => {
   return snap;
 };
-let selectedUserId = $state<string>(
-  (data.locals.user && data.locals.user.id) ?? '',
+let selected${routeCName}Id = $state(
+  data.locals.${routeName_}.id
 );
-const selectedUserId_ = () => {
-  return selectedUserId;
+const selected${routeCName}Id_ = () => {
+  return selected${routeCName}Id;
 };
+
 $effect(() => {
-    const suId = selectedUserId_();
-    if (suId) {
-      const u: UserPartial = data.users.filter(
-        (user) => user.id === suId,
-      )[0] as UserPartial;
+    const sel${routeCName}Id = selected${routeCName}Id_();
+    if (sel${routeCName}Id && data.${routeName_}s) {
+      const u = data.${routeName_}s.filter(
+        (${routeName_}) => ${routeName_}.id === sel${routeCName}Id,
+      )[0]; // as ${routeCName}Partial;
       if (u) {
         snap = {
-          id: u.id,
-          firstName: u.firstName,
-          lastName: u.lastName,
-          email: u.email,
-          password: '',
-          role: u.role,
+          ${theInitValues[2]}
         };
       }
     }
@@ -429,7 +550,7 @@ const clearForm = (event?: MouseEvent | KeyboardEvent) => {
   event?.preventDefault();
   snap = nullSnap;
   utils.hideButtonsExceptFirst([btnCreate, btnUpdate, btnDelete]);
-};` + `
+};
   
 const enhanceSubmit: SubmitFunction = async ({ action, formData }) => {
   const required:string[] = [];
@@ -615,8 +736,10 @@ and the third to toggle parent's color.
   }
 </style>
 `
-  const filePath = path.join(plusPageSveltePath as string, '+page.svelte');
-  fs.writeFileSync(filePath, plusPageSvelte, 'utf8');
+  // outputChannel.appendLine('+page.svelte'+ plusPageSvelte); outputChannel.show();
+  const pageSveltePath = path.join(routeNamePath, '/+page.svelte');
+  outputChannel.appendLine('save +page.svelte at '+ pageSveltePath); outputChannel.show();
+  fs.writeFileSync(pageSveltePath, plusPageSvelte, 'utf8');
 }
 // function createUtils(routeName:String, fields:string[]) {
   
@@ -685,7 +808,7 @@ function createCRInput(){
     height?: string;
     fontsize?: string;
     margin?: string;
-    type?: string;
+    type?: string|number|Date|boolean|password|time|text|tel|range|radio|checkbox;
     value?: string;
     required?: boolean;
     capitalize?: boolean;
@@ -1825,12 +1948,7 @@ async function findPrismaSchemaRoot(): Promise<string | null> {
     [modelName: string]: ModelInfo;
   };
 
-  // {} has [key,value] easy to select a model via key
-  // for (const [modelName, fields] of Object.entries(models)) {   // iterating
-  type Models = {
-    [modelName: string]: string[];
-  }
-  const modelsFieldNames: Models = {};  
+  
   let strModelNames = '|'
 
   function parsePrismaSchema(schemaContent: string): SchemaModels {
@@ -1951,6 +2069,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // const defaultFolderPath: string = '/home/mili/TEST/cr-crud-extension';
   rootPath = await execShell('pwd');
   rootPath = rootPath.replace(/\n$/,'');
+  routesPath = path.join(rootPath, '/src//routes/')
   // vscode.window.showInformationMessage('rootPath ' + rootPath)
   // vscode.window.showErrorMessage('execShell pwd '+ rootPath);
 
@@ -2186,12 +2305,12 @@ export async function activate(context: vscode.ExtensionContext) {
           fields: string[];
           embellishments:string[];
         };
-
-        const plusPageSveltePath = path.join(rootPath as string, `/src/routes/${routeName}`);
-        const filePath = path.join(plusPageSveltePath, '/+page.svelte');
-        if (fs.existsSync(filePath)){
+        outputChannel.appendLine(routeName + ' -- '+ JSON.stringify(fields,null,2) + ' -- '+ embellishments.join()); outputChannel.show();
+        const pageSveltePath = path.join(routesPath, routeName, '/+page.svelte');
+        outputChannel.appendLine(pageSveltePath); outputChannel.show();
+        if (fs.existsSync(pageSveltePath)){
           const answer = await vscode.window.showWarningMessage(
-            'There is a route with this name. To overwrite it?',
+            `There is a route ${routeName}. To overwrite it?`,
             { modal: true },
             'Yes',
             'No'
@@ -2204,6 +2323,7 @@ export async function activate(context: vscode.ExtensionContext) {
           [funcName: string]: Function;
         };
         routeName_ = routeName;
+        routeCName = routeName[0].toUpperCase() + routeName.slice(1);
         fields_= fields;
         embellishments_ = embellishments;
         // createUtils(routeName, fields);
@@ -2222,14 +2342,22 @@ export async function activate(context: vscode.ExtensionContext) {
             funcList[fun]() // call the function reference
           }finally{}
         }
-        createFormPage(includeTypes);
+        createFormPage(includeTypes, outputChannel);
         buttons_();
+
+        // create accompanying +page.server.ts file
+        const pageServerPath = path.join(routesPath, routeName_, '/+page.server.ts')
+        fs.writeFileSync(pageServerPath, getServerPage(), 'utf8');
 
         panel.webview.postMessage({
           command: "createCrudSupportDone"
         });
         outputChannel.appendLine(`[WebView] createCrudSupport DONE`);
-        outputChannel.show(false);
+        outputChannel.show(true);
+
+        panel.webview.postMessage({
+            command: "enableRemoveHint",
+          });
       }
       else if(msg.command === 'saveTypes'){
         const appTypesPath = path.join(rootPath as string, '/src/lib/types/');
@@ -2242,6 +2370,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // CRAppTypes from schema.prisma
   export type Role = 'USER' | 'ADMIN' | 'VISITOR';
   ${msg.payload.replace(/DateTime/g, 'Date').replace(/\bInt\b/g, 'Number').replace(/\?/g, '')}
+
 `
         const appTypeFilePath = path.join(appTypesPath, 'types.ts')
         if (fs.existsSync(appTypeFilePath)) {
@@ -2729,6 +2858,7 @@ created in the route specified in the Route Name input box.
   let labelEl
   let routeLabelNode
   let timer
+  let noRemoveHint = false
 
   // Fires only one time
   // based on two variables noPrismaSchemaL and installPartTwoPending
@@ -2799,8 +2929,8 @@ created in the route specified in the Route Name input box.
     fieldNameEl.value = '';
     setTimeout(() => {
       const children = schemaContainerEl.children
-      for (let i = 0; i < children.length; i++) {
-        const det = children[i]
+      for (child of children) {
+        const det = child;
         if (det.hasAttribute('open')) {
           det.removeAttribute('open')
         }
@@ -2864,25 +2994,11 @@ created in the route specified in the Route Name input box.
       rootPath = msg.rootPath,
       fieldModels= msg.modelsFieldNames
     }
-    // msgEl.innerHTML += '<br/>Ext to Webview: on renderSchema got fieldModels';
-    // try{
-    //   msgEl.innerHTML += '<br/>in try with fieldModels'
-    //   if (fieldModels){
-    //     msgEl.innerHTML += '<br/>Ext to Webview: on renderSchema fieldModels object exists'
-    //     const fields = fieldModels['User'];
-    //     msgEl.innerHTML += '<br/>USER fields: '+ fields.join(',');
-    //     for (let i=0; i < fields.length; i++){
-    //       msgEl.innerHTML += '<br/>'+ fields[i];
-    //     }
-    //   }else{
-    //     msgEl.innerHTML += '<br/>NO fieldModels';
-    //   }
-    // }catch(err){
-    //   const msg = typeof err ==='object' ? err.message : String(err);
-    //   msgEl.innerHTML += '<br/>catch on parse: '+ err;
-    // }
     if(msg.command === 'taskError'){
       vscode.postMessage({command: 'log',  text: 'EXT: Prisma installation err '+ msg.error});
+    }
+    if(msg.command === 'enableRemoveHint'){
+      noRemoveHint = false
     }
   })
 
@@ -2968,7 +3084,7 @@ created in the route specified in the Route Name input box.
         types += \`
   export type \${modelName} = {
     \`
-        includeTypes += 'db'+ modelName + ', '
+        includeTypes += modelName + ', '
         if (modelName === 'User') {
           includeTypes += 'Role, '
         }
@@ -3033,9 +3149,9 @@ created in the route specified in the Route Name input box.
             if (theFields){
               // msgEl.innerHTML += '<br/>fieldModels[modelName] found for modelName: '+modelName;
               // msgEl.innerHTML += '<br/>JSON on the Fields: '+ JSON.stringify(theFields) + ' theFields.length '+ theFields.length;
-              for (let i=0; i < theFields.length; i++){
+              for (field of theFields){
                 // msgEl.innerHTML += '<br/>theFields loop: '+ theFields[i];
-                fieldNameEl.value = theFields[i];
+                fieldNameEl.value = field;
                 fieldNameEl.dispatchEvent(enterKeyEvent);
               }
               return
@@ -3197,6 +3313,7 @@ created in the route specified in the Route Name input box.
       const listEls = fieldsListEl.querySelectorAll('.list-el')
       listEls.forEach(el => {
         el.addEventListener('mouseenter', () => {
+          if (noRemoveHint) return
           removeHintEl.style.top = String(el.offsetTop - el.offsetHeight) + 'px'
           removeHintEl.style.left = String(el.offsetLeft + 12) + 'px'
           removeHintEl.style.opacity = '1'
@@ -3230,7 +3347,8 @@ created in the route specified in the Route Name input box.
       .map(checkbox => checkbox.id)
   }
 
-  createBtnEl.addEventListener('click', () => {
+  createBtnEl.addEventListener('click', (event) => {
+    noRemoveHint = true
     if (routeName && fields.length) {
       // user has chance to change route name 
       document.querySelector('.crud-support-done').innerHTML = "route <span style='color:pink;'>" + routeNameEl.value + "</span>  created";
