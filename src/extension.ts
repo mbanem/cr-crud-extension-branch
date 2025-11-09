@@ -43,6 +43,31 @@ function passwordHashAndToken(){
 				userAuthToken: crypto.randomUUID()
 		`.slice(0,-3)
 }
+function getPartialTypes(fullTypes: string) {
+	fullTypes = fullTypes.replace(/(\s*?).*?password.*?:/mg,'$1\t\tpassword').replace(/export type (\w+)\s*=/g, 'export type $1Partial =');
+	const allowedFields = 'String|Number|Boolean|Date|Role|password';
+	const excludedFields = '[]|createdAt|Hash|Token|Post|Blog|User|Category|Todo|Profile|.*?Id';
+	let allowedRegex = new RegExp(allowedFields);
+	let excludedRegex = new RegExp(excludedFields);
+	function uiField(field:string){
+		let ok = field.match(allowedRegex);
+		let nok = field.match(excludedRegex);
+		return ok && !nok
+	}
+	const sp = fullTypes.split('export type')
+	let f =''
+	sp.slice(2).forEach((type: string) => {
+		let fields = type.split('\n')
+		f += 'export type '+ fields[0]+ '\n'
+		fields.slice(1,-1).forEach(field => {
+			if (uiField(field)){
+					f += field+ '\n'
+				}
+		})
+		f += '};\n'
+	})
+	return f;
+}
 function getServerPage(){
   let imp = `import { db } from '$lib/server/db';
 import type { PageServerLoad } from './$types';
@@ -56,7 +81,7 @@ import { fail } from '@sveltejs/kit';
 export const load: PageServerLoad = (async ({}) => {
 	const ${routeName_}s = await db.${routeName_}.findMany({
 		select:{
-      ${fNamesList().replace(/password,/,'').replace(/\s+/g, '').replace(/,/g, `: true,
+      ${fNamesList().replace(/password,?\s*?/,'').replace(/\s+/g, '').replace(/,/g, `: true,
       `)+ ': true'}
 		}
   });
@@ -79,25 +104,25 @@ export const actions: Actions = {
 	if (!(${fNamesList().replace(/,/g, ' &&')})) {
 		return fail(400, {
 			data: {
-				${fNamesList().replace(/password,?/,'')}
+				${fNamesList().replace(/password,?\s*?/,'')}
 			},
 			message: 'Insufficient data supplied'
 		})
 	}
 	const ${routeName_}Exists = await db.${routeName_}.findFirst({
 			where: {
-				${fNamesList()}
+				${fNamesList().replace(/password,?\s*?/, '').replace(/role,?\s*?/, '')}
 			}
 		})
 		if (${routeName_}Exists) {
 			return fail(400, {
-				data: { ${fNamesList().replace(/password,?/,'')} },
+				data: { ${fNamesList().replace(/password,?\s*?/,'')} },
 				message: 'Unacceptable data'
 			})
 		} else {
 			const ${routeName_} = await db.${routeName_}.create({
 				data: {
-					${fNamesList()},
+					${fNamesList().replace(/password,?\s*?/, '')},
 					${passwordHashAndToken()}
 				}
 			})
@@ -281,6 +306,12 @@ function asType(type:string){
     case 'boolean':{
       return 'as boolean';
     }
+    case 'role':{
+      return 'as Types.Role';
+    }
+    case 'date':{
+      return 'as Date';
+    }
   }
   return ''
 }
@@ -433,10 +464,10 @@ function nullType(fName:string){
 
 let importTypes = 'import type {';
 function createFormPage(includeTypes: string, outputChannel: any){
-  outputChannel.appendLine('createFormPage entry point routesPath: '+ routesPath); outputChannel.show();
+  // outputChannel.appendLine('createFormPage entry point routesPath: '+ routesPath); outputChannel.show();
   const routeNamePath = path.join(routesPath, routeName_)
   if (!fs.existsSync(routeNamePath)) {
-    outputChannel.appendLine('create routeNamePath: '+ routeNamePath); outputChannel.show();
+    // outputChannel.appendLine('create routeNamePath: '+ routeNamePath); outputChannel.show();
     fs.mkdirSync(routeNamePath, { recursive: true });
   }
 
@@ -738,7 +769,7 @@ and the third to toggle parent's color.
 `
   // outputChannel.appendLine('+page.svelte'+ plusPageSvelte); outputChannel.show();
   const pageSveltePath = path.join(routeNamePath, '/+page.svelte');
-  outputChannel.appendLine('save +page.svelte at '+ pageSveltePath); outputChannel.show();
+  // outputChannel.appendLine('save +page.svelte at '+ pageSveltePath); outputChannel.show();
   fs.writeFileSync(pageSveltePath, plusPageSvelte, 'utf8');
 }
 // function createUtils(routeName:String, fields:string[]) {
@@ -856,7 +887,7 @@ function createCRInput(){
   };
   // NOTE: enter non breaking unicode space: type 00A0 and press Alt + X
   // here we held between apostrophes three non breaking spaces
-  title = '   ' + capitalizes(title);
+  title = '  ' + capitalizes(title);
   let requiredStr = required ? \`\${title} is required\` : '';
 
   (function () {
@@ -869,9 +900,6 @@ function createCRInput(){
     }
   })();
   const topPosition = \`\${-1 * Math.floor(parseInt(fontsize) / 3)}px\`;
-
-  // allow pre-defined values to show up when user specify them
-  // let inputValue = $state<string>('');
 
   if (browser) {
     try {
@@ -908,7 +936,6 @@ function createCRInput(){
       }
     }
     if (exportValueOn.includes('blur')) {
-      // value = inputValue;
       if (onInputIsReadyCallback) {
         onInputIsReadyCallback();
       }
@@ -926,7 +953,6 @@ function createCRInput(){
     // if keypress is Enter and exportValueOn does not include Enter we return
     if (exportValueOn.includes('enter') && event.key !== 'Enter') {
       if (capitalize && value) {
-        // value = capitalizes(value);
         value = utils.capitalize(value);
       }
       return;
@@ -948,8 +974,6 @@ function createCRInput(){
         exportValueOn.includes('keypress') ||
         (exportValueOn.includes('enter') && event.key === 'Enter')
       ) {
-        // value = inputValue;
-
         if (onInputIsReadyCallback) {
           onInputIsReadyCallback();
           if (clearOnInputIsReady) {
@@ -981,7 +1005,6 @@ function createCRInput(){
     inputEl.focus();
     value = str;
   };
-  // setContext('setInputBoxValue', setInputBoxValue);
   onMount(() => {
     label = document.getElementsByTagName('label')[0] as HTMLLabelElement;
     setTimeout(() => {
@@ -1032,18 +1055,11 @@ function createCRInput(){
     padding-top: 0.8rem;
     label {
       position: absolute;
-      // transform: translateY(-50%);
-      // top: calc(var(--INPUT-COMRUNNER-HEIGHT) * 0.5);
       left: 15px;
-      // top: 26px;
       font-size: var(--INPUT-COMRUNNER-FONT-SIZE);
       color: var(--INPUT-COLOR);
       background-color: var(--INPUT-BACKGROUND-COLOR);
-      // opacity: 0.5;
       transition: 0.5s;
-      // .stay-on-top {
-      //   top: -15px;
-      // }
     }
     input {
       display: inline-block;
@@ -1067,9 +1083,8 @@ function createCRInput(){
 
   .err {
     color: pink;
-    // border: 1px solid #808080;
-    // border-radius: 3px;
-    padding: 1px 0.5rem;
+    /* when placeholder moves on top it makes space on the right of 0.2rem*/
+    padding: 1px 0.2rem;
   }
 </style>
 `
@@ -1266,6 +1281,7 @@ function createCRActivity(){
   // svelte-ignore non_reactive_update
   // let msgEl: HTMLSpanElement;
   // svelte-ignore non_reactive_update
+  let msgEl: HTMLSpanElement;
   let selectBox: HTMLSelectElement;
   let timer: NodeJS.Timeout | string | number | undefined; //ReturnValue<typeof setTimeout>;
   const killTimer = () => {
@@ -2273,7 +2289,7 @@ export async function activate(context: vscode.ExtensionContext) {
           try{
             if(modelsFieldNames){
               outputChannel.appendLine('modelsFieldNames found'); outputChannel.show();
-              outputChannel.appendLine('strModelNames:' + strModelNames); outputChannel.show();
+              // outputChannel.appendLine('strModelNames:' + strModelNames); outputChannel.show();
 
               // outputChannel.appendLine(JSON.stringify(modelsFieldNames,null,2)); outputChannel.show();
 
@@ -2305,9 +2321,9 @@ export async function activate(context: vscode.ExtensionContext) {
           fields: string[];
           embellishments:string[];
         };
-        outputChannel.appendLine(routeName + ' -- '+ JSON.stringify(fields,null,2) + ' -- '+ embellishments.join()); outputChannel.show();
+        // outputChannel.appendLine(routeName + ' -- '+ JSON.stringify(fields,null,2) + ' -- '+ embellishments.join()); outputChannel.show();
         const pageSveltePath = path.join(routesPath, routeName, '/+page.svelte');
-        outputChannel.appendLine(pageSveltePath); outputChannel.show();
+        // outputChannel.appendLine(pageSveltePath); outputChannel.show();
         if (fs.existsSync(pageSveltePath)){
           const answer = await vscode.window.showWarningMessage(
             `There is a route ${routeName}. To overwrite it?`,
@@ -2366,21 +2382,23 @@ export async function activate(context: vscode.ExtensionContext) {
         }
         // includeTypes = msg.includeTypes;
         // vscode.window.showInformationMessage(includeTypes)
-        const types = `
+        let types = `
   // CRAppTypes from schema.prisma
-  export type Role = 'USER' | 'ADMIN' | 'VISITOR';
+  export type Role = 'USER' | 'ADMIN' | 'VISITOR' | 'MODERATOR';
   ${msg.payload.replace(/DateTime/g, 'Date').replace(/\bInt\b/g, 'Number').replace(/\?/g, '')}
 
 `
+        outputChannel.appendLine(getPartialTypes(types)); outputChannel.show();
+        types += getPartialTypes(types);
         const appTypeFilePath = path.join(appTypesPath, 'types.ts')
-        if (fs.existsSync(appTypeFilePath)) {
-          let content = fs.readFileSync(appTypeFilePath, 'utf-8');
-          if (!content.includes('// CRAppTypes')){
-            fs.appendFileSync(appTypeFilePath, types, 'utf8');
-          }
-        }else{
+        // if (fs.existsSync(appTypeFilePath)) {
+        //   let content = fs.readFileSync(appTypeFilePath, 'utf-8');
+        //   if (!content.includes('// CRAppTypes')){
+        //     fs.appendFileSync(appTypeFilePath, types, 'utf8');
+        //   }
+        // }else{
           fs.writeFileSync(appTypeFilePath, types, 'utf8');
-        }
+        // }
       }
       else if(msg.command === 'log'){
         // vscode.window.showInformationMessage(`Bane command log ${msg.text}`);
