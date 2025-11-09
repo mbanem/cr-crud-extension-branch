@@ -271,7 +271,7 @@ function buttons_(){
   const spinner: boolean = embellishments_.includes('CRSpinner');
   ['create', 'update', 'delete'].forEach((caption) => {
     // console.log('buttons_()', caption)
-    const cap = caption[0].toUpperCase() + caption.slice(1)
+    const cap = caption[0].toUpperCase() + caption.slice(1) // capitalize button caption
     const hid = cap !== 'Create';
     if(spinner){
       buttons += `    <CRSpinner
@@ -351,6 +351,7 @@ function inputBox(name:string, type: string){
       </CRInput>
       `
   }
+  // standard input boxes required
   return `<input type="hidden" name="${name}" bind:value={snap.${name}} />
   `
 }
@@ -475,7 +476,6 @@ function createFormPage(includeTypes: string, outputChannel: any){
 
   fields_.forEach(fName=>{
     let [ , name, type] = fName.match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m);
-
     inputBoxes += inputBox(name, type)
   })
   let imports= ''
@@ -2359,7 +2359,7 @@ export async function activate(context: vscode.ExtensionContext) {
           }finally{}
         }
         createFormPage(includeTypes, outputChannel);
-        buttons_();
+        // buttons_();
 
         // create accompanying +page.server.ts file
         const pageServerPath = path.join(routesPath, routeName_, '/+page.server.ts')
