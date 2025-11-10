@@ -29,6 +29,41 @@ function fNamesList(){
   }
   return fList.slice(0,-2)
 }
+function dbSelectListDataEntry(kind:string, tabs:number = 0){
+	let f =``;
+  let sp = ',\n\t\t\t\t\t\t\t\t'.slice(0, tabs +3)
+	switch(kind){
+		case 'Select': {
+			fields_.forEach(field => {
+				if (!field.includes('password')){
+					f += field.replace(/"/g,'')+ ',\n';
+				}
+			})
+			return f;
+		}
+		case 'List':{
+			let el = {}
+			return (fields_.join()+',').replace(/:\s*?\w+,/g,', ').slice(0,-2);
+		}
+    case 'formData': {
+      return (fields_.join()+',').replace(/,/g, sp);
+    }
+		case 'DataEntry':{
+      
+			return fields_.join()
+        .replace(/updatedAt:.*?Da/, 'updatedAt')
+        .replace(/id,/,'')
+				.replace(/:\s*?\w+,/g, sp)
+				.slice(0,-2)
+				.replace(/password/,'passwordHash: await bcrypt.hash(password, 10)')+
+				',\n\t\t\t\t\tuserAuthToken: crypto.randomUUID()';
+			
+		}
+		default:{
+			return '';
+		}
+	}
+}
 function fieldTypeList(){
   let fieldTypeList = ``
   for(const field of fields_){
@@ -68,6 +103,7 @@ function getPartialTypes(fullTypes: string) {
 	})
 	return f;
 }
+
 function getServerPage(){
   let imp = `import { db } from '$lib/server/db';
 import type { PageServerLoad } from './$types';
@@ -77,6 +113,7 @@ import type { Actions } from '@sveltejs/kit';
 import bcrypt from 'bcrypt'
 import * as utils from '$lib/utils';;
 import { fail } from '@sveltejs/kit';
+
 
 export const load: PageServerLoad = (async ({}) => {
 	const ${routeName_}s = await db.${routeName_}.findMany({
@@ -94,23 +131,23 @@ export const load: PageServerLoad = (async ({}) => {
 }) satisfies PageServerLoad;
 
 export const actions: Actions = {
-	create: async ({ request }) => {
-    const { ${fNamesList()} } = Object.fromEntries(
-		// @ts-expect-error
-		await request.formData()
-	) as {
-    ${fieldTypeList()}
-	};
-	if (!(${fNamesList().replace(/,/g, ' &&')})) {
-		return fail(400, {
-			data: {
-				${fNamesList().replace(/password,?\s*?/,'')}
-			},
-			message: 'Insufficient data supplied'
-		})
-	}
-	const ${routeName_}Exists = await db.${routeName_}.findFirst({
-			where: {
+  create: async ({ request }) => {
+      const { ${fNamesList()} } = Object.fromEntries(
+      // @ts-expect-error
+      await request.formData()
+    ) as {
+      ${fieldTypeList()}
+    };
+    if (!(${fNamesList().replace(/,/g, ' &&')})) {
+      return fail(400, {
+        data: {
+          ${fNamesList().replace(/password,?\s*?/,'')}
+        },
+        message: 'Insufficient data supplied'
+      })
+    }
+    const ${routeName_}Exists = await db.${routeName_}.findFirst({
+		where: {
 				${fNamesList().replace(/password,?\s*?/, '').replace(/role,?\s*?/, '')}
 			}
 		})
@@ -131,6 +168,40 @@ export const actions: Actions = {
 			success: true,
 			message: '${routeName_} created successfully'
 		}
+  },
+  // ------------------------------------------------
+  update: async ({ request }) => {
+		const input_data = Object.fromEntries(
+			// @ts-expect-error
+			await request.formData()
+		) as {
+      ${dbSelectListDataEntry('formData',2)}
+    }
+
+		const { ${dbSelectListDataEntry('List')} } = input_data
+		if (!(${dbSelectListDataEntry('List').replace(/,/g, '&&')} )) {
+			return fail(400, {
+				data: { ${dbSelectListDataEntry('List').replace(/password./,'')} },
+				message: 'Insufficient data supplied'
+			})
+		}
+    await utils.sleep(2000);
+    try {
+      await db.${routeName_}.update({
+        where: {
+          id
+        },
+        data: {
+          ${dbSelectListDataEntry('DataEntry',4).replace(/id,.*?$/,'')}
+        },
+      });
+      return {
+        ${dbSelectListDataEntry('List').replace(/password,/,'')},
+        success: "${routeCName} updated successfully",
+      };
+    } catch (err) {
+      return fail(500, { message: 'Internal error occurred' });
+    }
   }
 } satisfies Actions
 `
@@ -2288,17 +2359,17 @@ export async function activate(context: vscode.ExtensionContext) {
           const parsedSchema = parsePrismaSchema(schemaContent);
           try{
             if(modelsFieldNames){
-              outputChannel.appendLine('modelsFieldNames found'); outputChannel.show();
+              // outputChannel.appendLine('modelsFieldNames found'); outputChannel.show();
               // outputChannel.appendLine('strModelNames:' + strModelNames); outputChannel.show();
 
               // outputChannel.appendLine(JSON.stringify(modelsFieldNames,null,2)); outputChannel.show();
 
             } else {
-              outputChannel.appendLine('modelsFieldNames NOT found'); outputChannel.show();
+              // outputChannel.appendLine('modelsFieldNames NOT found'); outputChannel.show();
             }
           }catch(err){
             const msg = err instanceof Error ? err.message : String(err);
-            outputChannel.appendLine('No modelsFieldNames found '+ msg);  outputChannel.show();
+            // outputChannel.appendLine('No modelsFieldNames found '+ msg);  outputChannel.show();
           }
           // TODO: parse schemaContent and send back to WebView
           // ---------------------- JSON parser schemaModels via command sendingSchemaModel  ----------------------
@@ -2321,6 +2392,9 @@ export async function activate(context: vscode.ExtensionContext) {
           fields: string[];
           embellishments:string[];
         };
+        if (fields.includes('updatedAt: Da')){
+          outputChannel.appendLine('2395 fields'); outputChannel.show();
+        }
         // outputChannel.appendLine(routeName + ' -- '+ JSON.stringify(fields,null,2) + ' -- '+ embellishments.join()); outputChannel.show();
         const pageSveltePath = path.join(routesPath, routeName, '/+page.svelte');
         // outputChannel.appendLine(pageSveltePath); outputChannel.show();
@@ -2341,6 +2415,10 @@ export async function activate(context: vscode.ExtensionContext) {
         routeName_ = routeName;
         routeCName = routeName[0].toUpperCase() + routeName.slice(1);
         fields_= fields;
+        if (fields_.includes('updatedAt: Da')){
+          outputChannel.appendLine('2415 fields_= fields;'); outputChannel.show();
+        }
+        // outputChannel.appendLine(JSON.stringify(fields_,null,2));outputChannel.show();
         embellishments_ = embellishments;
         // createUtils(routeName, fields);
         const funcList: FuncList = {
@@ -2368,8 +2446,8 @@ export async function activate(context: vscode.ExtensionContext) {
         panel.webview.postMessage({
           command: "createCrudSupportDone"
         });
-        outputChannel.appendLine(`[WebView] createCrudSupport DONE`);
-        outputChannel.show(true);
+        // outputChannel.appendLine(`[WebView] createCrudSupport DONE`);
+        // outputChannel.show(true);
 
         panel.webview.postMessage({
             command: "enableRemoveHint",
@@ -2388,7 +2466,7 @@ export async function activate(context: vscode.ExtensionContext) {
   ${msg.payload.replace(/DateTime/g, 'Date').replace(/\bInt\b/g, 'Number').replace(/\?/g, '')}
 
 `
-        outputChannel.appendLine(getPartialTypes(types)); outputChannel.show();
+        // outputChannel.appendLine(getPartialTypes(types)); outputChannel.show();
         types += getPartialTypes(types);
         const appTypeFilePath = path.join(appTypesPath, 'types.ts')
         // if (fs.existsSync(appTypeFilePath)) {
@@ -2405,8 +2483,8 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`log ${msg.text}`);
         // log should have at least a text property
         // Or log to output channel
-        outputChannel.appendLine(`[WebView log outputChannel ${msg.text}] `);
-        outputChannel.show(true); // false = don't preserve focus
+        // outputChannel.appendLine(`[WebView log outputChannel ${msg.text}] `);
+        // outputChannel.show(true); // false = don't preserve focus
       }
       else if(msg.command === 'cancel'){
         panel.dispose();
