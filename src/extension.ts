@@ -7,8 +7,9 @@ import * as child_process from 'child_process';
 
 let rootPath = '';
 let routesPath = '';
-let routeName_ ='';
-let routeCName = '';    // capitalized
+let modelTableName ='';
+let modelCTableName = '';    // capitalized
+let routeFolderName_ = '';
 let fields_:string[]=[];
 let embellishments_:string[]=[];
 let terminal: vscode.Terminal | undefined;
@@ -16,8 +17,6 @@ let noPrismaSchema = false;
 let installPartTwoPending = false;
 let pm = 'unknown';
 let ex = 'unknown';
-// {} has [key,value] easy to select a model via key
-// for (const [modelName, fields] of Object.entries(models)) {   // iterating
 type Models = {
   [modelName: string]: string[];
 }
@@ -73,7 +72,7 @@ function fieldTypeList(){
 	return fieldTypeList.slice(0,-4);
 }
 function passwordHashAndToken(){
-	if (routeName_ !== 'user') return;
+	if (modelTableName !== 'user') return;
 	return `passwordHash: await bcrypt.hash(password, 10),
 				userAuthToken: crypto.randomUUID()
 		`.slice(0,-3)
@@ -116,17 +115,17 @@ import { fail } from '@sveltejs/kit';
 
 
 export const load: PageServerLoad = (async ({}) => {
-	const ${routeName_}s = await db.${routeName_}.findMany({
+	const ${modelTableName}s = await db.${modelTableName}.findMany({
 		select:{
       ${fNamesList().replace(/password,?\s*?/,'').replace(/\s+/g, '').replace(/,/g, `: true,
       `)+ ': true'}
 		}
   });
-	if (! ${routeName_}s) {
-		return fail(400, { message: 'No  ${routeName_}s in db' });
+	if (! ${modelTableName}s) {
+		return fail(400, { message: 'No  ${modelTableName}s in db' });
 	}
 	return {
-		${routeName_}s
+		${modelTableName}s
 	};
 }) satisfies PageServerLoad;
 
@@ -146,18 +145,18 @@ export const actions: Actions = {
         message: 'Insufficient data supplied'
       })
     }
-    const ${routeName_}Exists = await db.${routeName_}.findFirst({
+    const ${modelTableName}Exists = await db.${modelTableName}.findFirst({
 		where: {
 				${fNamesList().replace(/password,?\s*?/, '').replace(/role,?\s*?/, '')}
 			}
 		})
-		if (${routeName_}Exists) {
+		if (${modelTableName}Exists) {
 			return fail(400, {
 				data: { ${fNamesList().replace(/password,?\s*?/,'')} },
 				message: 'Unacceptable data'
 			})
 		} else {
-			const ${routeName_} = await db.${routeName_}.create({
+			const ${modelTableName} = await db.${modelTableName}.create({
 				data: {
 					${fNamesList().replace(/password,?\s*?/, '')},
 					${passwordHashAndToken()}
@@ -166,7 +165,7 @@ export const actions: Actions = {
 		}
 		return {
 			success: true,
-			message: '${routeName_} created successfully'
+			message: '${modelTableName} created successfully'
 		}
   },
   // ------------------------------------------------
@@ -187,7 +186,7 @@ export const actions: Actions = {
 		}
     await utils.sleep(2000);
     try {
-      await db.${routeName_}.update({
+      await db.${modelTableName}.update({
         where: {
           id
         },
@@ -197,7 +196,7 @@ export const actions: Actions = {
       });
       return {
         ${dbSelectListDataEntry('List').replace(/password,/,'')},
-        success: "${routeCName} updated successfully",
+        success: "${modelCTableName} updated successfully",
       };
     } catch (err) {
       return fail(500, { message: 'Internal error occurred' });
@@ -343,15 +342,19 @@ function buttons_(){
   ['create', 'update', 'delete'].forEach((caption) => {
     // console.log('buttons_()', caption)
     const cap = caption[0].toUpperCase() + caption.slice(1) // capitalize button caption
-    const hid = cap !== 'Create';
+    const cre = cap !== 'Create';
+    let id = ''
+    if (cap === 'Create'){
+      id = " || '' !== (snap.id as string)"
+    }
     if(spinner){
       buttons += `    <CRSpinner
             bind:button={btn${cap}}
             spinOn={loading}
             caption=${caption}
             formaction="?/${caption}"
-            disabled={!formDataValid}
-            hidden={!formDataValid}
+            disabled={!formDataValid }
+            hidden={!formDataValid ${id}}
           >
           </CRSpinner>
           `
@@ -410,8 +413,10 @@ function toCapitalize(name:string, type:string){
 }
 
 function inputBox(name:string, type: string){
+   
   if (embellishments_.includes('CRInput')){
-    return `<CRInput title="${name}"
+    return `<CRInput
+        title="${name}"
         exportValueOn="enter|blur"
         type='${inputType(name, type)}'
         capitalize={${toCapitalize(name,type)}}
@@ -443,7 +448,7 @@ function toArray(fields_: string[]){
 let theInitValues: string[] = [];
 function initValues(){
   let updateFields = ``
-  let partialType = `type ${routeCName}Partial = {
+  let partialType = `type ${modelCTableName}Partial = {
   id: string | null
   `;
   let clean_snap = '';
@@ -537,7 +542,7 @@ function nullType(fName:string){
 let importTypes = 'import type {';
 function createFormPage(includeTypes: string, outputChannel: any){
   // outputChannel.appendLine('createFormPage entry point routesPath: '+ routesPath); outputChannel.show();
-  const routeNamePath = path.join(routesPath, routeName_)
+  const routeNamePath = path.join(routesPath, modelTableName)
   if (!fs.existsSync(routeNamePath)) {
     // outputChannel.appendLine('create routeNamePath: '+ routeNamePath); outputChannel.show();
     fs.mkdirSync(routeNamePath, { recursive: true });
@@ -557,17 +562,17 @@ function createFormPage(includeTypes: string, outputChannel: any){
 let cr_Activity = ''
 if (embellishments_.includes('CRActivity')){
   cr_Activity = `<CRActivity
-  PageName='${routeName_}'
+  PageName='${modelTableName}'
   bind:result
-  bind:selected${routeCName}Id
-  ${routeName_}={data.locals.${routeName_}}
-  ${routeName_}s={data.${routeName_}s}
+  bind:selected${modelCTableName}Id
+  ${modelTableName}={data.locals.${modelTableName}}
+  ${modelTableName}s={data.${modelTableName}s}
 ></CRActivity>`
 }
   
 initValues();
 let plusPageSvelte = `<script lang="ts">
-// ${routeName_}/+page.svelte
+// ${modelTableName}/+page.svelte
 import type { Snapshot } from '../$types';
 import { onMount } from 'svelte';
 import type { PageData, ActionData } from './$types';
@@ -578,7 +583,7 @@ import { page } from '$app/state'; // for page.status code on actions
 
 import * as utils from '$lib/utils';
 import * as Types from '$lib/types/types';
-` + imports +
+` + imports + 
 
 `
 type ARGS = {
@@ -590,26 +595,28 @@ let { data, form }: ARGS = $props();
 ${theInitValues[1]}
 let nullSnap = {
   ${theInitValues[0]}
-} as ${routeCName}Partial;
+} as ${modelCTableName}Partial;
 
-
-let snap = $state<${routeCName}Partial>(data.locals.${routeName_} as ${routeCName}Partial ?? nullSnap);
+const crId_ = () => {
+  return snap.id
+}
+let snap = $state<${modelCTableName}Partial>(data.locals.${modelTableName} as ${modelCTableName}Partial ?? nullSnap);
 const snap_ = () => {
   return snap;
 };
-let selected${routeCName}Id = $state(
-  data.locals.${routeName_}.id
+let selected${modelCTableName}Id = $state(
+  data.locals.${modelTableName}.id
 );
-const selected${routeCName}Id_ = () => {
-  return selected${routeCName}Id;
+const selected${modelCTableName}Id_ = () => {
+  return selected${modelCTableName}Id;
 };
 
 $effect(() => {
-    const sel${routeCName}Id = selected${routeCName}Id_();
-    if (sel${routeCName}Id && data.${routeName_}s) {
-      const u = data.${routeName_}s.filter(
-        (${routeName_}) => ${routeName_}.id === sel${routeCName}Id,
-      )[0]; // as ${routeCName}Partial;
+    const sel${modelCTableName}Id = selected${modelCTableName}Id_();
+    if (sel${modelCTableName}Id && data.${modelTableName}s) {
+      const u = data.${modelTableName}s.filter(
+        (${modelTableName}) => ${modelTableName}.id === sel${modelCTableName}Id,
+      )[0]; // as ${modelCTableName}Partial;
       if (u) {
         snap = {
           ${theInitValues[2]}
@@ -628,7 +635,19 @@ const clearMessage = () => {
     result = '';
   }, 2000);
 };
-    
+
+$effect(() => {
+  let idOK = ((crId_() as string).length === 36) as boolean;
+  btnCreate.disabled = idOK || !formDataValid;
+  btnCreate.style.opacity = btnCreate.disabled ? '0.4' : '1';
+
+  btnUpdate.disabled = !idOK || !formDataValid;
+  btnUpdate.style.opacity = btnUpdate.disabled ? '0.4' : '1';
+
+  btnDelete.disabled = !idOK;
+  btnDelete.style.opacity = btnDelete.disabled ? '0.4' : '1';
+});
+
 const capitalize = (str:string) => {
   const spaceUpper = (su:string) => {
     return \` \${su[1]?.toUpperCase()}\`
@@ -642,7 +661,7 @@ const capitalize = (str:string) => {
 let formDataValid = $derived.by(() => {
   if (!snap_()) return false;
     for (const [key, value] of Object.entries(snap_())) {
-      if (key === 'id') continue;
+      if ('id|updatedAt'.includes(key)) continue;
       if (!value) return false;
     }
     return true;
@@ -675,10 +694,10 @@ const enhanceSubmit: SubmitFunction = async ({ action, formData }) => {
     
   result =
     action.search === '?/create'
-    ? "creating ${routeName_}..."
+    ? "creating ${modelTableName}..."
     : action.search === '?/update'
-    ? "updating ${routeName_}..."
-    : "deleting ${routeName_}..."
+    ? "updating ${modelTableName}..."
+    : "deleting ${modelTableName}..."
   if (action.search === '?/delete') {
     utils.hideButtonsExceptFirst([btnDelete, btnCreate, btnUpdate]);
   }
@@ -687,11 +706,11 @@ const enhanceSubmit: SubmitFunction = async ({ action, formData }) => {
     await update();
       
     if (action.search === '?/create') {
-      result = page.status === 200 ? "${routeName_} created" : 'create failed';
+      result = page.status === 200 ? "${modelTableName} created" : 'create failed';
     } else if (action.search === '?/update') {
-      result = page.status === 200 ? "${routeName_} updated" : 'update failed';
+      result = page.status === 200 ? "${modelTableName} updated" : 'update failed';
     } else if (action.search === '?/delete') {
-      result = page.status === 200 ? "${routeName_} deleted" : 'delete failed';
+      result = page.status === 200 ? "${modelTableName} deleted" : 'delete failed';
       // iconDelete.classList.toggle('hidden');
       utils.hideButtonsExceptFirst([btnCreate, btnUpdate, btnDelete]);
     }
@@ -717,7 +736,7 @@ const enhanceSubmit: SubmitFunction = async ({ action, formData }) => {
 };
 </script>
 <svelte:head>
-  <title>${routeName_} Page</title>
+  <title>${modelTableName} Page</title>
 </svelte:head>
 ${cr_Activity}
 
@@ -832,6 +851,7 @@ and the third to toggle parent's color.
   .pink{
     color: pink;
   }
+  /* CRTooltip tha have direct child as span element */
   CRTooltip:has(> span) {
     display: flex;
     align-items: baseline;
@@ -839,7 +859,7 @@ and the third to toggle parent's color.
 </style>
 `
   // outputChannel.appendLine('+page.svelte'+ plusPageSvelte); outputChannel.show();
-  const pageSveltePath = path.join(routeNamePath, '/+page.svelte');
+  const pageSveltePath = path.join(routeNamePath, routeFolderName_, '/+page.svelte');
   // outputChannel.appendLine('save +page.svelte at '+ pageSveltePath); outputChannel.show();
   fs.writeFileSync(pageSveltePath, plusPageSvelte, 'utf8');
 }
@@ -2387,8 +2407,9 @@ export async function activate(context: vscode.ExtensionContext) {
         }
       }
       else if (msg.command === 'createCrudSupport') {
-        const {routeName, fields, embellishments } = msg.payload as {
+        const {routeName, routeFolderName, fields, embellishments } = msg.payload as {
           routeName: string;
+          routeFolderName: string;
           fields: string[];
           embellishments:string[];
         };
@@ -2412,8 +2433,9 @@ export async function activate(context: vscode.ExtensionContext) {
         type FuncList = {
           [funcName: string]: Function;
         };
-        routeName_ = routeName;
-        routeCName = routeName[0].toUpperCase() + routeName.slice(1);
+        modelTableName = routeName;
+        routeFolderName_ = routeFolderName;
+        modelCTableName = routeName[0].toUpperCase() + routeName.slice(1);
         fields_= fields;
         if (fields_.includes('updatedAt: Da')){
           outputChannel.appendLine('2415 fields_= fields;'); outputChannel.show();
@@ -2440,7 +2462,7 @@ export async function activate(context: vscode.ExtensionContext) {
         // buttons_();
 
         // create accompanying +page.server.ts file
-        const pageServerPath = path.join(routesPath, routeName_, '/+page.server.ts')
+        const pageServerPath = path.join(routesPath, routeFolderName_, '/+page.server.ts')
         fs.writeFileSync(pageServerPath, getServerPage(), 'utf8');
 
         panel.webview.postMessage({
@@ -2955,6 +2977,7 @@ created in the route specified in the Route Name input box.
   let routeLabelNode
   let timer
   let noRemoveHint = false
+  let routeFolderName = ''
 
   // Fires only one time
   // based on two variables noPrismaSchemaL and installPartTwoPending
@@ -2979,7 +3002,7 @@ created in the route specified in the Route Name input box.
       )[0];
     msgEl = document.getElementById('messagesId')
     msgEl.addEventListener('dblclick', () => {
-      msgEl.innerHTML = ''
+      msgEl.innerHTML = '<pre>'
     })
 
 
@@ -3146,30 +3169,28 @@ created in the route specified in the Route Name input box.
 
   }
 
+  
+  
   // a parsed schema from a Prisma ORM is sent back from the extension
   // and as it is an HTML collection we turn it into an Object with
   // entries to be destructed into individual object properties
   function renderParsedSchema(schemaModels) {
-
-    // function addFieldnameToCandidateList(el){
-    //   const fieldName = el.innerText
-    //   vscode.postMessage({command:'log', text: fieldName})
-    //   // let type = el.nextSibling.innerText.match(/type:\\s*(\\w+)/)?.[1];
-    //   let type = dateTimeToDate(el.nextSibling.innerText.match(/type:(\\S+)/)?.[1])
-    //   if (!'String|Number|Boolean|Role'.includes(type)) {
-    //     return
-    //   }
-
-    //   // the standard procedure for entering a new fieldname is via input box + Enter
-    //   if (el.tagName === 'P' && el.nextSibling.tagName === 'P' && !fields.includes(fieldName)) {
-    //     // keep inputbox value so preserve it if any and restore it after
-    //     const savedEntry = fieldNameEl.value
-    //     fieldNameEl.value = \`\${fieldName}: \${type}\`
-    //     fieldNameEl.dispatchEvent(enterKeyEvent)
-    //     fieldNameEl.value = savedEntry
-    //   }
-    // }
-
+    
+    const ordered = [
+      'id', 'authorId', 'userId', 'employeeId', 'customerId', 'ownerId',
+      'firstName', 'lastName', 'middleName', 'name', 'email',
+      'password', 'role', 'updatedAt'
+    ];
+    function sortArrByOrdered(arr, order){
+      try{
+        return order
+          .map(key => arr.find(item => item.startsWith(key+':')))
+          .filter(Boolean); 
+      }catch(err){
+        const msg = err instanceof Error ? err.message : String(err);
+        vscode.postMessage({ command: 'log',  text: msg });
+      }
+    }
     let markup = ''
     let types = ''
     let includeTypes = 'import type { '
@@ -3218,12 +3239,13 @@ created in the route specified in the Route Name input box.
     // now all the markup constructed as a string render into  schemaContainerEl
     schemaContainerEl.innerHTML = markup
 
-    // schemaContainerEl gets click event but it has to be from the first <p> element
+    // schemaContainerEl gets click event but it has to be from the first <pre> element
     // and that fieldname (innerText) id ignored if already saved in the fields
     schemaContainerEl.addEventListener('click', (event) => {
 
       if (event.target.tagName === 'SUMMARY') {
         const modelName = event.target.innerText;
+        routeFolderName = modelName
         routeNameEl.value = modelName.toLowerCase();
         routeNameEl.focus()
         routeNameEl.click()
@@ -3233,18 +3255,19 @@ created in the route specified in the Route Name input box.
           clearLabelText();
           return;
         }
+        
         changeLabelText('pink', 'Change Route Name if necessary', 4000)
         //----------------
         if (fieldModels){
-          msgEl.innerHTML += '<br/>SUMMARY fieldModels found: '+ JSON.stringify(fieldModels) + ' modelName: '+ modelName;
+          msgEl.innerHTML += '<pre>SUMMARY fieldModels found:  modelName: '+ modelName +'</pre>';
           
           try{
-            msgEl.innerHTML += '<br/>before theFields = fieldModels.User'
-            theFields = Array.from(fieldModels[modelName]);
+            // msgEl.innerHTML += '<br/>before theFields = fieldModels.User'
+            theFields = sortArrByOrdered(Array.from(fieldModels[modelName]), ordered);
             // msgEl.innerHTML += '<br/>made an assignment theFields = fieldModels.User';
             if (theFields){
               // msgEl.innerHTML += '<br/>fieldModels[modelName] found for modelName: '+modelName;
-              // msgEl.innerHTML += '<br/>JSON on the Fields: '+ JSON.stringify(theFields) + ' theFields.length '+ theFields.length;
+              msgEl.innerHTML += '<pre>JSON on the Fields: '+ JSON.stringify(theFields,null,2) + '</pre>';
               for (field of theFields){
                 // msgEl.innerHTML += '<br/>theFields loop: '+ theFields[i];
                 fieldNameEl.value = field;
@@ -3448,7 +3471,7 @@ created in the route specified in the Route Name input box.
     if (routeName && fields.length) {
       // user has chance to change route name 
       document.querySelector('.crud-support-done').innerHTML = "route <span style='color:pink;'>" + routeNameEl.value + "</span>  created";
-      const payload = { routeName, fields, embellishments: selectedCheckboxes() }
+      const payload = { routeName, routeFolderName, fields, embellishments: selectedCheckboxes() }
       vscode.postMessage({ command: 'createCrudSupport', payload: payload })
     }
   })
