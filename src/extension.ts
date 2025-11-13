@@ -636,16 +636,15 @@ const clearMessage = () => {
   }, 2000);
 };
 
+let dBtnCreate = $state(true);
+let dBtnUpdate = $state(true);
+let dBtnDelete = $state(true);
+let idOK = $state<boolean>(false);
 $effect(() => {
-  let idOK = ((crId_() as string).length === 36) as boolean;
-  btnCreate.disabled = idOK || !formDataValid;
-  btnCreate.style.opacity = btnCreate.disabled ? '0.4' : '1';
-
-  btnUpdate.disabled = !idOK || !formDataValid;
-  btnUpdate.style.opacity = btnUpdate.disabled ? '0.4' : '1';
-
-  btnDelete.disabled = !idOK;
-  btnDelete.style.opacity = btnDelete.disabled ? '0.4' : '1';
+  idOK = ((crId_() as string).length === 36) as boolean;
+  dBtnCreate = idOK || !formDataValid;
+  dBtnUpdate = !idOK || !formDataValid;
+  dBtnDelete = !idOK;
 });
 
 const capitalize = (str:string) => {
@@ -1271,7 +1270,7 @@ function createCRSpinner(){
 {#snippet spinner(color: string)}
   <!-- styling for a spinner itself -->
   <div
-    class="spinner"
+    class={hidden ? 'hide' : 'spinner'}
     style:border-color="{color} transparent {color}
     {color}"
     style="--duration: {duration}"
@@ -1287,9 +1286,9 @@ function createCRSpinner(){
   <button
     bind:this={button}
     type="submit"
-    class:hidden
+    class={hidden ? 'hide' : ''}
     {formaction}
-    {disabled}
+    disabled={hidden ? true : false}
     style:cursor={cursor ? 'pointer' : 'not-allowed'}
     style:width
     style:height
@@ -1323,7 +1322,7 @@ function createCRSpinner(){
       transform: rotate(360deg);
     }
   }
-  .hidden {
+  .hide {
     display: none;
   }
   button {
