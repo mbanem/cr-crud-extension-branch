@@ -677,7 +677,7 @@ const clearMessage = () => {
   // for Create new record full formValid with no id must be true
   let formDataValid = $derived.by(() => {
     const status = [true, false];
-    if (!snap_() === nullSnap) return [false, false];
+    if (snap_() === nullSnap) return [false, false];
     for (const [key, value] of Object.entries(snap_())) {
       if ('id|updatedAt'.includes(key)) continue;
       if (value) {
@@ -1004,9 +1004,9 @@ function createCRInput(){
       // getting _string so return ' String' with a leading space
       return \` \${su[1]?.toUpperCase()}\`;
     };
-    str = str[0]?.toUpperCase() + str.slice(1);
+    let s = str[0]?.toUpperCase() + str.slice(1);
     return (
-      str
+      s
         .replace(/\b[a-z](?=[a-z]{2})/g, (char) => char.toUpperCase())
         // snake_string_format replace _ with space
         .replace(/(_\w)/, spaceUpper)
