@@ -7,9 +7,9 @@ import * as child_process from 'child_process';
 
 let rootPath = '';
 let routesPath = '';
-let routeName_ ='';
-let modelObjName_ = '';
-let modelObjCName_ = '';
+let modelObjName_ ='';
+let modelObjCName_ = '';    // capitalized
+let routeFolderName_ = '';
 let fields_:string[]=[];
 let embellishments_:string[]=[];
 let terminal: vscode.Terminal | undefined;
@@ -40,8 +40,8 @@ function fieldTypeList(){
 }
 function passwordHashAndToken(){
 	if (modelObjName_ !== 'user') {
-    return; // TODO
-  }  
+    return;
+  }
 	return `passwordHash: await bcrypt.hash(password, 10),
 				userAuthToken: crypto.randomUUID()
 		`.slice(0,-3)
@@ -87,10 +87,6 @@ function dbSelectListDataEntry(kind:string, tabs:number = 0){
 			let el = {}
 			return (fields_.join()+',').replace(/:\s*?\w+,/g,', ').slice(0,-2);
 		}
-		case '?List':{
-			let el = {}
-			return (fields_.join()+',').replace(/:/g, '?:').replace(/:\s*?\w+,/g,', ').slice(0,-2);
-		}
     case 'formData': {
       return (fields_.join()+',').replace(/,/g, sp);
     }
@@ -120,6 +116,7 @@ import bcrypt from 'bcrypt'
 import * as utils from '$lib/utils';;
 import { fail } from '@sveltejs/kit';
 
+
 export const load: PageServerLoad = (async ({}) => {
 	const ${modelObjName_}s = await db.${modelObjName_}.findMany({
 		select:{
@@ -136,23 +133,23 @@ export const load: PageServerLoad = (async ({}) => {
 }) satisfies PageServerLoad;
 
 export const actions: Actions = {
-	create: async ({ request }) => {
-    const { ${fNamesList()} } = Object.fromEntries(
-		// @ts-expect-error
-		await request.formData()
-	) as {
-    ${fieldTypeList()}
-	};
-	if (!(${fNamesList().replace(/,/g, ' &&')})) {
-		return fail(400, {
-			data: {
-				${fNamesList().replace(/password,?\s*?/,'')}
-			},
-			message: 'Insufficient data supplied'
-		})
-	}
-	const ${modelObjName_}Exists = await db.${modelObjName_}.findFirst({
-			where: {
+  create: async ({ request }) => {
+      const { ${fNamesList()} } = Object.fromEntries(
+      // @ts-expect-error
+      await request.formData()
+    ) as {
+      ${fieldTypeList()}
+    };
+    if (!(${fNamesList().replace(/,/g, ' &&')})) {
+      return fail(400, {
+        data: {
+          ${fNamesList().replace(/password,?\s*?/,'')}
+        },
+        message: 'Insufficient data supplied'
+      })
+    }
+    const ${modelObjName_}Exists = await db.${modelObjName_}.findFirst({
+		where: {
 				${fNamesList().replace(/password,?\s*?/, '').replace(/role,?\s*?/, '')}
 			}
 		})
@@ -180,26 +177,25 @@ export const actions: Actions = {
 			// @ts-expect-error
 			await request.formData()
 		) as {
-      ${dbSelectListDataEntry('?formData',2)}
+      ${dbSelectListDataEntry('formData',2)}
     }
 
 		const { ${dbSelectListDataEntry('List')} } = input_data
-		if (!(${dbSelectListDataEntry('List').replace(/,/g, ' || ')} )) {
+		if (!(${dbSelectListDataEntry('List').replace(/,/g, '&&')} )) {
 			return fail(400, {
 				data: { ${dbSelectListDataEntry('List').replace(/password./,'')} },
 				message: 'Insufficient data supplied'
 			})
 		}
     await utils.sleep(2000);
-    const d = Object.fromEntries(
-			Object.entries(input_data).filter(([_, value]) => value).filter(Boolean)
-		);
     try {
       await db.${modelObjName_}.update({
         where: {
           id
         },
-        data: d,
+        data: {
+          ${dbSelectListDataEntry('DataEntry',4).replace(/id,.*?$/,'')}
+        },
       });
       return {
         ${dbSelectListDataEntry('List').replace(/password,/,'')},
@@ -208,43 +204,9 @@ export const actions: Actions = {
     } catch (err) {
       return fail(500, { message: 'Internal error occurred' });
     }
-  },
-  // ------------------------------------------------
-  delete: async ({ request }) => {
-  const input_data = Object.fromEntries(
-			// @ts-expect-error
-			await request.formData()
-		) as {
-      ${dbSelectListDataEntry('?formData',2)}
-    }
-
-		const { ${dbSelectListDataEntry('List')} } = input_data
-		if (!(${dbSelectListDataEntry('List').replace(/,/g, ' || ')} )) {
-			return fail(400, {
-				data: { ${dbSelectListDataEntry('List').replace(/password./,'')} },
-				message: 'Insufficient data supplied'
-			})
-		}
-    await utils.sleep(2000);
-    const d = Object.fromEntries(
-			Object.entries(input_data).filter(([_, value]) => value).filter(Boolean)
-		);
-    try {
-      await db.${modelObjName_}.delete({
-        where: {
-          id
-        }
-      });
-      return {
-        ${dbSelectListDataEntry('List').replace(/password,/,'')},
-        success: "${modelObjCName_} deleted successfully",
-      };
-    } catch (err) {
-      return fail(500, { message: 'Internal error occurred' });
-    }
   }
 } satisfies Actions
-`;
+`
 	return imp;
 }
 const schemaWhatToDo = `/*
@@ -382,15 +344,20 @@ function buttons_(){
   const spinner: boolean = embellishments_.includes('CRSpinner');
   ['create', 'update', 'delete'].forEach((caption) => {
     // console.log('buttons_()', caption)
-    const cap = caption[0].toUpperCase() + caption.slice(1);
-    const hid = cap !== 'Create';
+    const cap = caption[0].toUpperCase() + caption.slice(1) // capitalize button caption
+    const cre = cap !== 'Create';
+    let id = ''
+    if (cap === 'Create'){
+      id = " || '' !== (snap.id as string)"
+    }
     if(spinner){
       buttons += `    <CRSpinner
             bind:button={btn${cap}}
             spinOn={loading}
             caption=${caption}
             formaction="?/${caption}"
-            hidden={dBtn${cap}}
+            disabled={!formDataValid }
+            hidden={!formDataValid ${id}}
           >
           </CRSpinner>
           `;
@@ -449,15 +416,14 @@ function toCapitalize(name:string, type:string){
 }
 
 function inputBox(name:string, type: string){
-  const required = name === 'id' ? '!dBtnCreate' : '!dBtnUpdate';
   if (embellishments_.includes('CRInput')){
-    return `<CRInput 
+    return `<CRInput
         title="${name}"
         exportValueOn="enter|blur"
         type='${inputType(name, type)}'
         capitalize={${toCapitalize(name,type)}}
         bind:value={snap.${name} ${asType(type)}}
-        required={${required}}
+        required={true}
         width='22.5rem'
       >
       </CRInput>
@@ -492,7 +458,7 @@ function initValues(){
   fields_.forEach(fName => {
     let [ , name, type] = fName.match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m); 
     updateFields += `${name}: u.${name},
-          `;
+          `
     clean_snap += name + `: null,
   `;
     if (!fields.includes('id:string')){
@@ -500,7 +466,7 @@ function initValues(){
   id: null`);
     }
     if (type.includes('[]')){
-      type = 'array';
+      type = 'array'
     }
     type = type.replace(/\?/g,'');
     switch(type){
@@ -509,7 +475,7 @@ function initValues(){
   ${name}: null`);
   if (name !== 'id'){
   partialType += `${name}: string | null
-  `;
+  `
   }
         break;
       }
@@ -517,14 +483,14 @@ function initValues(){
         fields.push(`
   ${name}: 0`);
   partialType += `${name}: number | null
-  `;
+  `
         break;
       }
       case 'date':{
         fields.push(`
   ${name}: null`);
   partialType += `${name}: Date | null
-  `;
+  `
         break;
       }
       case 'boolean':{
@@ -538,28 +504,28 @@ function initValues(){
         fields.push(`
   ${name}: []`);
   partialType += `${name}: array | []
-  `;
+  `
         break;
       }
       case 'role':{
         fields.push(`
   ${name}: 'VISITOR'`);
   partialType += `${name}: Types.Role | null
-  `;
+  `
         break;
       }
       default:{
         fields.push(`
   ${name}: ${type}`);
   partialType += `${name}: ${type} | null_xx
-  `;
+  `
         break;
       }
     }
   });
   clean_snap = clean_snap.replace(/,\s*$/,'')
   partialType = partialType.slice(0,-3) + `
-}`;
+}`
   updateFields = updateFields.replace(/u\.password/, "''").slice(0,-11);
 
   theInitValues = [clean_snap, partialType, updateFields];
@@ -578,7 +544,7 @@ function nullType(fName:string){
 let importTypes = 'import type {';
 function createFormPage(includeTypes: string, outputChannel: any){
   // outputChannel.appendLine('createFormPage entry point routesPath: '+ routesPath); outputChannel.show();
-  const routeNamePath = path.join(routesPath, routeName_)
+  const routeNamePath = path.join(routesPath, modelObjName_)
   if (!fs.existsSync(routeNamePath)) {
     // outputChannel.appendLine('create routeNamePath: '+ routeNamePath); outputChannel.show();
     fs.mkdirSync(routeNamePath, { recursive: true });
@@ -588,7 +554,6 @@ function createFormPage(includeTypes: string, outputChannel: any){
 
   fields_.forEach(fName=>{
     let [ , name, type] = fName.match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m);
-
     inputBoxes += inputBox(name, type)
   })
   let imports= '';
@@ -599,7 +564,7 @@ function createFormPage(includeTypes: string, outputChannel: any){
 let cr_Activity = '';
 if (embellishments_.includes('CRActivity')){
   cr_Activity = `<CRActivity
-  PageName='${modelObjCName_}'
+  PageName='${modelObjName_}'
   bind:result
   bind:selected${modelObjCName_}Id
   ${modelObjName_}={data.locals.${modelObjName_}}
@@ -620,7 +585,7 @@ import { page } from '$app/state'; // for page.status code on actions
 
 import * as utils from '$lib/utils';
 import * as Types from '$lib/types/types';
-` + imports +
+` + imports + 
 
 `
 type ARGS = {
@@ -673,31 +638,16 @@ const clearMessage = () => {
   }, 2000);
 };
 
-// returns status[formValid, partiallyValid], on partiallyValid we can do update
-  // for Create new record full formValid with no id must be true
-  let formDataValid = $derived.by(() => {
-    const status = [true, false];
-    if (!snap_() === nullSnap) return [false, false];
-    for (const [key, value] of Object.entries(snap_())) {
-      if ('id|updatedAt'.includes(key)) continue;
-      if (value) {
-        status[1] = true;
-      } else {
-        status[0] = false;
-      }
-    }
-    return status;
-  });
-
-  let dBtnCreate = $state(true);
-  let dBtnUpdate = $state(true);
-  let dBtnDelete = $state(true);
-  let idOK = $derived(crId_() !== null && crId_()?.length === 36);
-  $effect(() => {
-    dBtnCreate = idOK || !formDataValid[0];
-    dBtnUpdate = !idOK || !formDataValid[1];
-    dBtnDelete = !idOK;
-  });
+let dBtnCreate = $state(true);
+let dBtnUpdate = $state(true);
+let dBtnDelete = $state(true);
+let idOK = $state<boolean>(false);
+$effect(() => {
+  idOK = ((crId_() as string).length === 36) as boolean;
+  dBtnCreate = idOK || !formDataValid;
+  dBtnUpdate = !idOK || !formDataValid;
+  dBtnDelete = !idOK;
+});
 
 const capitalize = (str:string) => {
   const spaceUpper = (su:string) => {
@@ -708,6 +658,15 @@ const capitalize = (str:string) => {
   .replace(/(_\\w)/, spaceUpper)
   .replace(/\\b[a-z](?=[a-z]{2})/g, (char) => char.toUpperCase())
 }
+    
+let formDataValid = $derived.by(() => {
+  if (!snap_()) return false;
+    for (const [key, value] of Object.entries(snap_())) {
+      if ('id|updatedAt'.includes(key)) continue;
+      if (!value) return false;
+    }
+    return true;
+});
     
 const clearForm = (event?: MouseEvent | KeyboardEvent) => {
   event?.preventDefault();
@@ -764,7 +723,7 @@ const enhanceSubmit: SubmitFunction = async ({ action, formData }) => {
     clearMessage();
   }
 
-      // ${buttons_()}
+      ${buttons_()}
   }
   let owner = true;
   const toggleColor = (event: MouseEvent, caption?: string) => {
@@ -778,7 +737,7 @@ const enhanceSubmit: SubmitFunction = async ({ action, formData }) => {
 };
 </script>
 <svelte:head>
-  <title>${modelObjCName_} Page</title>
+  <title>${modelObjName_} Page</title>
 </svelte:head>
 ${cr_Activity}
 
@@ -893,14 +852,15 @@ and the third to toggle parent's color.
   .pink{
     color: pink;
   }
+  /* CRTooltip tha have direct child as span element */
   CRTooltip:has(> span) {
     display: flex;
     align-items: baseline;
   }
 </style>
-`
+`;
   // outputChannel.appendLine('+page.svelte'+ plusPageSvelte); outputChannel.show();
-  const pageSveltePath = path.join(routeNamePath, '/+page.svelte');
+  const pageSveltePath = path.join(routeNamePath, routeFolderName_, '/+page.svelte');
   // outputChannel.appendLine('save +page.svelte at '+ pageSveltePath); outputChannel.show();
   fs.writeFileSync(pageSveltePath, plusPageSvelte, 'utf8');
 }
@@ -954,7 +914,7 @@ function createCRInput(){
   const componentsPath = ensureComponentPath()
   if (!componentsPath) return
   const crInput = `<script lang="ts">
-  //  components/CRInput.svelte
+  //  components/RInput.svelte
   import { browser } from '$app/environment';
   import * as utils from '$lib/utils';
   import { onMount } from 'svelte';
@@ -1144,11 +1104,6 @@ function createCRInput(){
         setFocus();
       }
     }, 300);
-    if (required) {
-      inputEl.setAttribute('required', 'true');
-    } else {
-      inputEl.removeAttribute('required');
-    }
   });
 </script>
 
@@ -1319,7 +1274,7 @@ function createCRSpinner(){
 {#snippet spinner(color: string)}
   <!-- styling for a spinner itself -->
   <div
-    class="spinner"
+    class={hidden ? 'hide' : 'spinner'}
     style:border-color="{color} transparent {color}
     {color}"
     style="--duration: {duration}"
@@ -1335,9 +1290,9 @@ function createCRSpinner(){
   <button
     bind:this={button}
     type="submit"
-    class:hidden
+    class={hidden ? 'hide' : ''}
     {formaction}
-    {disabled}
+    disabled={hidden ? true : false}
     style:cursor={cursor ? 'pointer' : 'not-allowed'}
     style:width
     style:height
@@ -1371,7 +1326,7 @@ function createCRSpinner(){
       transform: rotate(360deg);
     }
   }
-  .hidden {
+  .hide {
     display: none;
   }
   button {
@@ -2183,7 +2138,7 @@ async function findPrismaSchemaRoot(): Promise<string | null> {
     const [, fields] = Object.entries(theFields)[0]
       for (let [fieldName, { type, prismaSetting }] of Object.entries(fields)) {
         if ('0|1'.includes(fieldName)) {
-          continue;
+          continue
         }
         // type could be optional, so remove ? if any as it cannot match model name
         type = type.replace(/\?/g, '');
@@ -2443,17 +2398,17 @@ export async function activate(context: vscode.ExtensionContext) {
           const parsedSchema = parsePrismaSchema(schemaContent);
           try{
             if(modelsFieldNames){
-              outputChannel.appendLine('modelsFieldNames found'); outputChannel.show();
+              // outputChannel.appendLine('modelsFieldNames found'); outputChannel.show();
               // outputChannel.appendLine('strModelNames:' + strModelNames); outputChannel.show();
 
               // outputChannel.appendLine(JSON.stringify(modelsFieldNames,null,2)); outputChannel.show();
 
             } else {
-              outputChannel.appendLine('modelsFieldNames NOT found'); outputChannel.show();
+              // outputChannel.appendLine('modelsFieldNames NOT found'); outputChannel.show();
             }
           }catch(err){
             const msg = err instanceof Error ? err.message : String(err);
-            outputChannel.appendLine('No modelsFieldNames found '+ msg);  outputChannel.show();
+            // outputChannel.appendLine('No modelsFieldNames found '+ msg);  outputChannel.show();
           }
           // TODO: parse schemaContent and send back to WebView
           // ---------------------- JSON parser schemaModels via command sendingSchemaModel  ----------------------
@@ -2471,13 +2426,16 @@ export async function activate(context: vscode.ExtensionContext) {
         }
       }
       else if (msg.command === 'createCrudSupport') {
-        const {routeName, modelObjName, fields, embellishments } = msg.payload as {
+        const {routeName, routeFolderName, fields, embellishments } = msg.payload as {
           routeName: string;
-          modelObjName: string;
+          routeFolderName: string;
           fields: string[];
           embellishments:string[];
         };
-        outputChannel.appendLine('routeName: '+ routeName + ' - modelObjName: '+ modelObjName); outputChannel.show();
+        if (fields.includes('updatedAt: Da')){
+          outputChannel.appendLine('2395 fields'); outputChannel.show();
+        }
+        // outputChannel.appendLine(routeName + ' -- '+ JSON.stringify(fields,null,2) + ' -- '+ embellishments.join()); outputChannel.show();
         const pageSveltePath = path.join(routesPath, routeName, '/+page.svelte');
         // outputChannel.appendLine(pageSveltePath); outputChannel.show();
         if (fs.existsSync(pageSveltePath)){
@@ -2494,10 +2452,14 @@ export async function activate(context: vscode.ExtensionContext) {
         type FuncList = {
           [funcName: string]: Function;
         };
-        routeName_ = routeName;
-        modelObjName_ = modelObjName.toLowerCase();
-        modelObjCName_ = modelObjName;  //[0].toUpperCase() + modelObjName.slice(1);
+        modelObjName_ = routeName;
+        routeFolderName_ = routeFolderName;
+        modelObjCName_ = routeName[0].toUpperCase() + routeName.slice(1);
         fields_= fields;
+        if (fields_.includes('updatedAt: Da')){
+          outputChannel.appendLine('2415 fields_= fields;'); outputChannel.show();
+        }
+        // outputChannel.appendLine(JSON.stringify(fields_,null,2));outputChannel.show();
         embellishments_ = embellishments;
         // createUtils(routeName, fields);
         const funcList: FuncList = {
@@ -2516,17 +2478,17 @@ export async function activate(context: vscode.ExtensionContext) {
           }finally{}
         }
         createFormPage(includeTypes, outputChannel);
-        buttons_();
+        // buttons_();
 
         // create accompanying +page.server.ts file
-        const pageServerPath = path.join(routesPath, routeName_, '/+page.server.ts')
+        const pageServerPath = path.join(routesPath, routeFolderName_, '/+page.server.ts')
         fs.writeFileSync(pageServerPath, getServerPage(), 'utf8');
 
         panel.webview.postMessage({
           command: "createCrudSupportDone"
         });
-        outputChannel.appendLine(`[WebView] createCrudSupport DONE`);
-        outputChannel.show(true);
+        // outputChannel.appendLine(`[WebView] createCrudSupport DONE`);
+        // outputChannel.show(true);
 
         panel.webview.postMessage({
             command: "enableRemoveHint",
@@ -2562,8 +2524,8 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`log ${msg.text}`);
         // log should have at least a text property
         // Or log to output channel
-        outputChannel.appendLine(`[WebView log outputChannel ${msg.text}] `);
-        outputChannel.show(true); // false = don't preserve focus
+        // outputChannel.appendLine(`[WebView log outputChannel ${msg.text}] `);
+        // outputChannel.show(true); // false = don't preserve focus
       }
       else if(msg.command === 'cancel'){
         panel.dispose();
@@ -3031,11 +2993,10 @@ created in the route specified in the Route Name input box.
   let theFields = [];
   let msgEl
   let labelEl
-  let routeName = ''
-  let modelObjName = ''
   let routeLabelNode
   let timer
   let noRemoveHint = false
+  let routeFolderName = ''
 
   // Fires only one time
   // based on two variables noPrismaSchemaL and installPartTwoPending
@@ -3060,7 +3021,7 @@ created in the route specified in the Route Name input box.
       )[0];
     msgEl = document.getElementById('messagesId')
     msgEl.addEventListener('dblclick', () => {
-      msgEl.innerHTML = '<pre>'
+      msgEl.innerHTML = ''
     })
 
 
@@ -3203,6 +3164,8 @@ created in the route specified in the Route Name input box.
     }
     return type
   }
+
+  let routeName = ''
   
   function changeLabelText(color, text, duration){
 
@@ -3225,30 +3188,13 @@ created in the route specified in the Route Name input box.
 
   }
 
+  
+  
   // a parsed schema from a Prisma ORM is sent back from the extension
   // and as it is an HTML collection we turn it into an Object with
   // entries to be destructed into individual object properties
   function renderParsedSchema(schemaModels) {
-
-    // function addFieldnameToCandidateList(el){
-    //   const fieldName = el.innerText
-    //   vscode.postMessage({command:'log', text: fieldName})
-    //   // let type = el.nextSibling.innerText.match(/type:\\s*(\\w+)/)?.[1];
-    //   let type = dateTimeToDate(el.nextSibling.innerText.match(/type:(\\S+)/)?.[1])
-    //   if (!'String|Number|Boolean|Role'.includes(type)) {
-    //     return
-    //   }
-
-    //   // the standard procedure for entering a new fieldname is via input box + Enter
-    //   if (el.tagName === 'P' && el.nextSibling.tagName === 'P' && !fields.includes(fieldName)) {
-    //     // keep inputbox value so preserve it if any and restore it after
-    //     const savedEntry = fieldNameEl.value
-    //     fieldNameEl.value = \`\${fieldName}: \${type}\`
-    //     fieldNameEl.dispatchEvent(enterKeyEvent)
-    //     fieldNameEl.value = savedEntry
-    //   }
-    // }
-
+    
     const ordered = [
       'id', 'authorId', 'userId', 'employeeId', 'customerId', 'ownerId',
       'firstName', 'lastName', 'middleName', 'name', 'email',
@@ -3264,7 +3210,6 @@ created in the route specified in the Route Name input box.
         vscode.postMessage({ command: 'log',  text: msg });
       }
     }
-
     let markup = ''
     let types = ''
     let includeTypes = 'import type { '
@@ -3313,13 +3258,14 @@ created in the route specified in the Route Name input box.
     // now all the markup constructed as a string render into  schemaContainerEl
     schemaContainerEl.innerHTML = markup
 
-    // schemaContainerEl gets click event but it has to be from the first <p> element
+    // schemaContainerEl gets click event but it has to be from the first <pre> element
     // and that fieldname (innerText) id ignored if already saved in the fields
     schemaContainerEl.addEventListener('click', (event) => {
 
       if (event.target.tagName === 'SUMMARY') {
-        modelObjName = event.target.innerText;
-        routeNameEl.value = modelObjName.toLowerCase();
+        const modelName = event.target.innerText;
+        routeFolderName = modelName
+        routeNameEl.value = modelName.toLowerCase();
         routeNameEl.focus()
         routeNameEl.click()
         const details = event.target.closest('details');
@@ -3328,18 +3274,19 @@ created in the route specified in the Route Name input box.
           clearLabelText();
           return;
         }
+        
         changeLabelText('pink', 'Change Route Name if necessary', 4000)
         //----------------
         if (fieldModels){
-          msgEl.innerHTML += '<br/>SUMMARY fieldModels found: '+ JSON.stringify(fieldModels) + ' modelObjName: '+ modelObjName;
+          msgEl.innerHTML += '<pre>SUMMARY fieldModels found:  modelName: '+ modelName +'</pre>';
           
           try{
-            msgEl.innerHTML += '<br/>before theFields = fieldModels.User'
-            theFields = sortArrByOrdered(Array.from(fieldModels[modelObjName]), ordered);
-            // msgEl.innerHTML += '<br/>made an assignment theFields = fieldModels.User';
+            // msgEl.innerHTML += '<br/>before theFields = fieldModels.User'
+            theFields = sortArrByOrdered(Array.from(fieldModels[modelName]), ordered);
+            msgEl.innerHTML += '<pre>theFields: '+ theFields +'</pre>';
             if (theFields){
-              // msgEl.innerHTML += '<br/>fieldModels[modelObjName] found for modelObjName: '+modelObjName;
-              // msgEl.innerHTML += '<br/>JSON on the Fields: '+ JSON.stringify(theFields) + ' theFields.length '+ theFields.length;
+              // msgEl.innerHTML += '<br/>fieldModels[modelName] found for modelName: '+modelName;
+              msgEl.innerHTML += '<pre>JSON on the Fields: '+ JSON.stringify(theFields,null,2) + '</pre>';
               for (field of theFields){
                 // msgEl.innerHTML += '<br/>theFields loop: '+ theFields[i];
                 fieldNameEl.value = field;
@@ -3349,7 +3296,7 @@ created in the route specified in the Route Name input box.
             }
           }catch(err){
             const msg = err instanceof Error ? err.message : String(err);
-            msgEl.innerHTML += '<br/>fieldModels[modelObjName] NOT found err: '+ msg
+            msgEl.innerHTML += '<br/>fieldModels[modelName] NOT found err: '+ msg
           }
         }else{
           msgEl.innerHTML += '<br/>SUMMARY fieldModels NOT found'
@@ -3543,7 +3490,7 @@ created in the route specified in the Route Name input box.
     if (routeName && fields.length) {
       // user has chance to change route name 
       document.querySelector('.crud-support-done').innerHTML = "route <span style='color:pink;'>" + routeNameEl.value + "</span>  created";
-      const payload = { routeName, modelObjName, fields, embellishments: selectedCheckboxes() }
+      const payload = { routeName, routeFolderName, fields, embellishments: selectedCheckboxes() }
       vscode.postMessage({ command: 'createCrudSupport', payload: payload })
     }
   })
