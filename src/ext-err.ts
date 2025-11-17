@@ -290,7 +290,6 @@ function initValues(){
 }
 
 function nullType(fName:string){
-  // @ts-expect-error
   let [ , name, type] = fName.match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m);
   // fName includes type and we added | null
   if (type.includes('[]')){
