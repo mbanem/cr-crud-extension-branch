@@ -30,7 +30,7 @@ function fNamesList(){
   }
   return fList.slice(0,-2)
 }
-function dbSelectListDataEntry(kind:string, tabs:number = 0){
+function dbSelectListDataEntry(kind:string){
 	let f =``;
 	switch(kind){
 		case 'Select': {
@@ -56,7 +56,6 @@ function dbSelectListDataEntry(kind:string, tabs:number = 0){
       return (fields_.join()+',').replace(/:/g, '?:').replace(/,/g, ',\n\t\t');
     }
 		case 'DataEntry':{
-      
 			return fields_.join()
         .replace(/updatedAt:.*?Da/, 'updatedAt')
         .replace(/id,/,'')
@@ -64,7 +63,6 @@ function dbSelectListDataEntry(kind:string, tabs:number = 0){
 				.slice(0,-2)
 				.replace(/password/,'passwordHash: await bcrypt.hash(password, 10)')+
 				',\n\t\t\t\t\tuserAuthToken: crypto.randomUUID()';
-			
 		}
 		default:{
 			return '';
@@ -88,7 +86,7 @@ function passwordHashAndToken(){
 		`.slice(0,-3)
 }
 function getPartialTypes(fullTypes: string) {
-	fullTypes = fullTypes.replace(/(\s*?).*?password.*?:/mg,'$1\t\tpassword').replace(/export type (\w+)\s*=/g, 'export type $1Partial =');
+	fullTypes = fullTypes.replace(/(\s*?).*?password.*?:/mg,'$1\t\tpassword:').replace(/export type (\w+)\s*=/g, 'export type $1Partial =');
 	const allowedFields = 'String|Number|Boolean|Date|Role|password';
 	const excludedFields = '[]|createdAt|Hash|Token|Post|Blog|User|Category|Todo|Profile|.*?Id';
 	let allowedRegex = new RegExp(allowedFields);
@@ -96,22 +94,104 @@ function getPartialTypes(fullTypes: string) {
 	function uiField(field:string){
 		let ok = field.match(allowedRegex);
 		let nok = field.match(excludedRegex);
-		return ok && !nok
+		return ok && !nok;
 	}
-	const sp = fullTypes.split('export type')
+	const sp = fullTypes.split('export type');
 	let f =''
 	sp.slice(2).forEach((type: string) => {
 		let fields = type.split('\n');
 		f += 'export type '+ fields[0]+ '\n';
 		fields.slice(1,-1).forEach(field => {
 			if (uiField(field)){
-					f += field+ '\n';
+					f += field.replace(/;/, ' | null;\n');
 				}
 		})
 		f += '};\n';
 	});
-	return f;
+	return f + `
+export type TCRInput = typeof CRInput;
+export type TCRActivity = typeof CRActivity;
+export type TCRTooltip = typeof CRTooltip;
+export type TCRSpinner = typeof CRSpinner;
+export type TCRSummaryDetail = typeof CRSummaryDetail;
+  `;
 }
+
+function getHooksPage() {
+
+  return `
+  import { redirect } from '@sveltejs/kit';
+  import type {Handle} from '@sveltejs/kit';
+  import { db } from '$lib/server/db';
+
+  export const handle: Handle = (async ({ event, resolve }) => {
+    let session='empty session';
+    try {
+      // getting cookie from the browser
+      session = event.cookies.get('session');
+      
+      if (!session) {
+        event.locals.user = {
+          id: '',
+          firstName: '',
+          lastName: '',
+          email:'',
+          password:'',
+          roles: ['VISITOR']
+        };
+        // prohibit access to ADMIN/USER-only allowed pages
+        // TODO create the list of must-login-first pages
+        if ('|fetch|news|store|comments|'.includes(\`|\${event.url.pathname.slice(1)}|\`)) {
+          throw redirect(303, '/login');
+        }
+        event.url.pathname = '/'
+        return await resolve(event);
+      }
+    } catch (error) {
+      console.log('event.cookies.getSession', error);
+    }
+
+    try {
+      // we can now authenticate user if logged in
+      const user = await db.user.findUnique({
+        where: {
+          userAuthToken: session
+        },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email:true,
+          role: true
+        }
+      });
+
+      if (user) {
+        event.locals.user = {
+          id: user.id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          password:'',
+          role: user.role
+        }
+      }else{
+        event.locals.user = {
+          id: '',
+          firstName: '',
+          lastName: '',
+          email:'',
+          password:'',
+          role: 'VISITOR'
+        };
+      }
+    } catch (err) {
+      console.log('hook getUser', err);
+    }
+    console.log('hooks locals',event.locals);
+    return await resolve(event);
+  }) satisfies Handle;`;
+};
 
 function getServerPage(){
   let imp = `import { db } from '$lib/server/db';
@@ -123,17 +203,23 @@ import bcrypt from 'bcrypt'
 import * as utils from '$lib/utils';;
 import { fail } from '@sveltejs/kit';
 
-export const load: PageServerLoad = (async ({}) => {
-	const ${modelObjName_}s = await db.${modelObjName_}.findMany({
+export const load: PageServerLoad = (async ({locals}) => {
+	const ${modelObjName_} = await db.${modelObjName_}.findMany({
 		select:{
       ${fNamesList().replace(/password,?\s*?/,'').replace(/\s+/g, '').replace(/,/g, `: true,
       `)+ ': true'}
+		},
+    orderBy:{
+			id: 'asc'
 		}
   });
 	if (! ${modelObjName_}s) {
 		return fail(400, { message: 'No  ${modelObjName_}s in db' });
 	}
+  const users = await db.user.findMany();
 	return {
+    locals,
+    users,
 		${modelObjName_}s
 	};
 }) satisfies PageServerLoad;
@@ -181,7 +267,7 @@ export const actions: Actions = {
 		const input_data = Object.fromEntries(
 			await request.formData()
 		) as {
-      ${dbSelectListDataEntry('?formData',2)}
+      ${dbSelectListDataEntry('?formData')}
     }
 
 		const { ${dbSelectListDataEntry('List')} } = input_data
@@ -215,7 +301,7 @@ export const actions: Actions = {
   const input_data = Object.fromEntries(
 			await request.formData()
 		) as {
-      ${dbSelectListDataEntry('?formData',2)}
+      ${dbSelectListDataEntry('?formData')}
     }
 
 		const { ${dbSelectListDataEntry('List')} } = input_data
@@ -262,7 +348,7 @@ Now in your program you use firstName but in db it is the first_name
 and the table in program is User but in db users thanks to the operators
 @map first_name and @@map users, as some db have
 internal user table so we use plural instead.
-*/`
+*/`;
 
 const envWhatToDo = `# Environment variables declared in this file are automatically made available to Prisma.
 // See the documentation for more detail: https://pris.ly/d/prisma-schema//accessing-environment-variables-from-the-schema
@@ -370,16 +456,16 @@ let buttons = `<div class='buttons'>
       `;
 function buttons_(){
   const spinner: boolean = embellishments_.includes('CRSpinner');
-  ['create', 'update', 'delete'].forEach((caption) => {
-    // console.log('buttons_()', caption)
+  ['create', 'update', 'delete', 'clear'].forEach((caption) => {
+    const faction = caption === 'clear' ? 'false': caption
     const cap = caption[0].toUpperCase() + caption.slice(1);
     const hid = cap !== 'Create';
     if(spinner){
       buttons += `    <CRSpinner
             bind:button={btn${cap}}
-            spinOn={loading}
+            spinOn={spin.${caption}}
             caption=${caption}
-            formaction="?/${caption}"
+            formaction="?/${faction}"
             hidden={dBtn${cap}}
           >
           </CRSpinner>
@@ -416,7 +502,7 @@ function asType(type:string){
   return '';
 }
 
-function inputType(name:string,type:string){
+function inputType(name:string, type:string){
   name = name.toLowerCase();
   type = type.toLowerCase();
   if (name==='password'){
@@ -429,20 +515,19 @@ function inputType(name:string,type:string){
 }
 
 function toCapitalize(name:string, type:string){
-  console.log('toCapitalize','name',name,'type',type)
   if ('id|password|email'.includes(name.toLowerCase())){
-    console.log('FALSE');
     return false;
   }
-  console.log('TRUE');
   return true;
 }
 
 function inputBox(name:string, type: string){
   const required = name === 'id' ? '!dBtnCreate' : '!dBtnUpdate';
+  const bindEl = `bind:this={${name}El}`;
   if (embellishments_.includes('CRInput')){
     return `<CRInput 
         title="${name}"
+        ${bindEl}
         exportValueOn="enter|blur"
         type='${inputType(name, type)}'
         capitalize={${toCapitalize(name,type)}}
@@ -471,12 +556,13 @@ function toArray(fields_: string[]){
   return fields;
 }
 */
+let variables = ``;
+let uiElements:any[] = [];
 let theInitValues: string[] = [];
 function initValues(){
   let updateFields = ``;
   let partialType = `type ${modelObjCName_}Partial = {
-  id: string | null
-  `;
+    `;
   let clean_snap = '';
   const fields: string[] = [];
   fields_.forEach(fName => {
@@ -487,7 +573,10 @@ function initValues(){
     updateFields += `${name}: u.${name},
           `;
     clean_snap += name + `: null,
+    `;
+    variables += `let ${name}El: Types.TCRInput | null = null;
   `;
+    uiElements.push(`${name}El`)
     if (!fields.includes('id:string')){
       fields.push(`
   id: null`);
@@ -567,6 +656,11 @@ function nullType(fName:string){
     return fName + ' | null';
   }
 }
+function isIdNumeric(fields:string[]){
+  try{
+    return /id:\s*?(Int|Number)/i.test(fields.join(','));
+  }finally{}
+}
 
 let importTypes = 'import type {';
 function createFormPage(includeTypes: string, outputChannel: any){
@@ -582,26 +676,297 @@ function createFormPage(includeTypes: string, outputChannel: any){
   fields_.forEach(fName=>{
     let [ , name, type] = fName.match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m);
 
-    inputBoxes += inputBox(name, type)
+    inputBoxes += inputBox(name, type);
   })
   let imports= '';
   embellishments_.forEach(comp => {
     imports += `import ${comp} from '$lib/components/${comp}.svelte';
-`
-})
+  `;
+});
 let cr_Activity = '';
 if (embellishments_.includes('CRActivity')){
   cr_Activity = `<CRActivity
   PageName='${modelObjCName_}'
   bind:result
-  bind:selected${modelObjCName_}Id
-  ${modelObjName_}={data.locals.${modelObjName_}}
-  ${modelObjName_}s={data.${modelObjName_}s}
+  bind:selectedUserId
+  user={data.locals?.user}
+  users={data.users}
 ></CRActivity>`;
 }
-  
+
 initValues();
-let plusPageSvelte = `<script lang="ts">
+
+let plusPageSvelte = `
+<script lang="ts">
+  // /${modelObjName_}/+page.svelte
+  import type { Snapshot } from '../$types';
+  import { onMount } from 'svelte';
+  import type { PageData, ActionData } from './$types';
+  import type { SubmitFunction } from '@sveltejs/kit';
+  import { enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
+  import { page } from '$app/state'; // for page.status code on actions
+  import * as utils from '$lib/utils';
+  import * as Types from '$lib/types/types';
+  ` + imports +
+
+  `
+  // find if modelObjNames.id is numeric or string
+  const idIsNumeric = isIdNumeric(fields);
+  type ARGS = {
+    data: PageData;
+    form: ActionData;
+  };
+  let { data, form }: ARGS = $props();
+  ${variables}
+  let uiElements:Array<Types.TCRInput> = [${uiElements}];
+  let nullSnap = {
+    ${theInitValues[0]}
+  } as Types.${modelObjCName_}Partial;
+
+  const crId_ = () => {
+    return idIsNumeric ? Number(snap.id) :  String(snap.id);
+  }
+  let snap = $state<Types.${modelObjCName_}Partial>(data.${modelObjName_}s?.[0] ?? nullSnap);
+  const snap_ = () => {
+    return snap;
+  };
+
+  const rowSelected = async (event: MouseEvent) => {
+		event.preventDefault();
+		const el = event.target as HTMLParagraphElement;
+    let idx = el.innerText.split(':')[0];
+		let id = idIsNumeric ?  Number(idx):  String(idx);
+		snap = data.${modelObjName_}s?.filter((el) => el.id === id)[0] as Types.${modelObjCName_}Partial;
+	};
+
+  let selectedUserId = $state(data.locals?.user.id) as string;
+
+  let btnCreate: HTMLButtonElement;
+  let btnUpdate: HTMLButtonElement;
+  let btnDelete: HTMLButtonElement;
+  let btnClear: HTMLButtonElement;
+  let result = $state('');
+  const clearMessage = () => {
+    setTimeout(() => {
+      result = '';
+    }, 2000);
+  };
+
+  // returns status[formValid, partiallyValid], on partiallyValid we can do update
+  // for Create new record full formValid with no id must be true
+  let formDataValid = $derived.by(() => {
+    const status = [true, false];
+    if (utils.same<Types.CategoryPartial>(snap_(), nullSnap)) return [false, false];
+    for (const [key, value] of Object.entries(snap_())) {
+      if ('id|updatedAt'.includes(key)) continue;
+      if (value) {
+        status[1] = true;
+      } else {
+        status[0] = false;
+      }
+    }
+    return status;
+  });
+
+  let dBtnCreate = $state(true);
+  let dBtnUpdate = $state(true);
+  let dBtnDelete = $state(true);
+  let idOK = $derived(
+    crId_() !== null && 
+    idIsNumeric ? (crId_() as number) > 0 : (crId_() as string).length === 36
+  );
+  $effect(() => {
+		dBtnCreate = idOK || !formDataValid[0];
+		dBtnUpdate = !idOK || !formDataValid[1];
+		dBtnDelete = !idOK || spin.delete;
+		const id = (idEl as Types.TCRInput)?.getInputBoxValue();
+		if (id) {
+			const sn = data.${modelObjName_}s?.filter((el) => el.id === id)[0] as Types.CategoryPartial;
+			if (sn.name !== snap.name) {
+				snap.name = sn.name;
+			}
+		}
+	});
+
+  const clearForm = (event?: MouseEvent | KeyboardEvent) => {
+    event?.preventDefault();
+    snap = nullSnap;
+    utils.hideButtonsExceptFirst([btnClear, btnCreate, btnUpdate, btnDelete]);
+  };
+  
+  interface ISpinner {
+		[key: string]: boolean;
+	}
+	let spin: ISpinner = $state({ create: false, update: false, delete: false });
+
+  const enhanceSubmit: SubmitFunction = async ({ action, formData, cancel }) => {
+    if (action.search === '?/clear') {
+			snap = nullSnap;
+			cancel();
+			// return false;
+		}
+    const required:string[] = [];
+    for (const [key, value] of Object.entries(snap)) {
+      formData.set(key, value as string);
+      if(!value){
+        const req = key +' is required';
+        // TODO check if querySelector is valid
+        const el = document.querySelector('[title="' + key +'"]')
+        if (el){
+          (el as HTMLInputElement).placeholder += req;
+          required.push(req)
+        }
+      }
+    }  
+          
+    if (required.join('').length){
+      return;
+    }
+
+    spin[action.search.slice(2)] = true; // start spinner animation
+      
+    result =
+      action.search === '?/create'
+      ? "creating ${modelObjName_}..."
+      : action.search === '?/update'
+      ? "updating ${modelObjName_}..."
+      : "deleting ${modelObjName_}..."
+    // if (action.search === '?/delete') {
+    //   utils.hideButtonsExceptFirst([btnDelete, btnCreate, btnUpdate]);
+    // }
+      
+    return async ({ update }) => {
+      await update();
+        
+      if (action.search === '?/create') {
+        result = page.status === 200 ? "${modelObjName_} created" : 'create failed';
+      } else if (action.search === '?/update') {
+        result = page.status === 200 ? "${modelObjName_} updated" : 'update failed';
+      } else if (action.search === '?/delete') {
+        result = page.status === 200 ? "${modelObjName_} deleted" : 'delete failed';
+        // iconDelete.classList.toggle('hidden');
+        // utils.hideButtonsExceptFirst([btnCreate, btnUpdate, btnDelete]);
+      }
+      invalidateAll();
+      await utils.sleep(1000);
+      spin[action.search.slice(2)] = false; // stop spinner animation
+      clearForm();
+      utils.hideButtonsExceptFirst([btnClear, btnCreate, btnUpdate, btnDelete]);
+      clearMessage();
+    }
+  };
+  // let owner = true;
+  const color = 'blue';   // spinner color
+	onMount(() => {
+		let ms = 0;
+		uiElements.forEach((el) => {
+			setTimeout(() => {
+				// @ts-expect-error no focus on CRInput
+				(el as TCRInput).setFocus(); // TODO get variable names
+				ms += 100;
+			}, ms);
+		});;
+	});
+  const handleWindowLoad = () => {
+    console.log('page fully loaded');
+  }
+</script>
+<svelte:window onload={handleWindowLoad} />
+<svelte:head>
+  <title>${modelObjCName_} Page</title>
+</svelte:head>
+${cr_Activity}
+
+<div class='two-column-grid'>
+  <div class='left-column'>
+    <form action="?/create" method="post" use:enhance={enhanceSubmit}>
+      <div class='form-wrapper'>
+        ${inputBoxes}
+        <div class='buttons-row'>
+          ${buttons}
+          </div>
+        </div>
+      </div>
+    </form>
+  </div> 
+
+  <div class='right-column' onclick={rowSelected} aria-hidden={true}>
+    <!-- argument true to return an array not a string -->
+    {#each data.${modelObjName_}s as r (r.id)}
+      <div class='grid-row'>
+        <p>{r.id}: {r.name}</p>
+      </div>
+    {/each}
+  </div> <!-- right-column -->
+
+</div>	<!-- two-column-grid -->
+
+<style lang="scss">
+	.form-wrapper {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1rem;
+		width: max-content;
+		padding: 1rem;
+		margin: 5rem auto;
+		border: 0.3px solid gray;
+		border-radius: 8px;
+		.buttons {
+			display: flex;
+			gap: 0.3rem;
+			justify-content: flex-end;
+			align-items: center;
+			button {
+				display: inline-block;
+			}
+		}
+	}
+	.two-column-grid {
+		display: grid;
+		width: 50vw;
+		margin: 0 auto;
+		grid-template-columns: 30rem 13rem;
+		gap: 2rem;
+		padding-bottom: 1.5rem;
+	}
+
+	.left-column {
+		border: 1px solid gray;
+		border-radius: 8px;
+		height: 75vh;
+	}
+	.right-column {
+		border: 1px solid gray;
+		padding: 1rem;
+		border-radius: 8px;
+		height: calc(75vh - 2rem);
+		display: grid;
+		width: 100%;
+		justify-content: start;
+		.grid-row {
+			margin: 0;
+			outline: none;
+			border: none;
+			width: 13rem;
+			height: 1rem !important;
+			p {
+				// padding: 3px 1.2rem;
+				margin: 0;
+				width: 100%;
+				padding: 5px 0;
+				&:hover {
+					background-color: cornsilk;
+					cursor: pointer;
+				}
+			}
+		}
+	}
+</style>
+`;
+
+let plusUserSvelte = `<script lang="ts">
 // ${modelObjName_}/+page.svelte
 import type { Snapshot } from '../$types';
 import { onMount } from 'svelte';
@@ -621,8 +986,7 @@ type ARGS = {
   form: ActionData;
 };
 let { data, form }: ARGS = $props();
-
-${theInitValues[1]}
+// theInitValues[1]
 let nullSnap = {
   ${theInitValues[0]}
 } as ${modelObjCName_}Partial;
@@ -630,23 +994,21 @@ let nullSnap = {
 const crId_ = () => {
   return snap.id
 }
-let snap = $state<${modelObjCName_}Partial>(data.locals.${modelObjName_} as ${modelObjCName_}Partial ?? nullSnap);
+// TODO what data is snap getting here it was .locals. but that could be user only not UI data
+let snap = $state<Types.${modelObjCName_}Partial>(data.${modelObjName_} as Types.${modelObjCName_}Partial ?? nullSnap);
 const snap_ = () => {
   return snap;
 };
-let selected${modelObjCName_}Id = $state(
-  data.locals.${modelObjName_}.id
+let selectedUserId = $state(
+  data.locals?.User.id
 );
-const selected${modelObjCName_}Id_ = () => {
-  return selected${modelObjCName_}Id;
-};
 
 $effect(() => {
-    const sel${modelObjCName_}Id = selected${modelObjCName_}Id_();
-    if (sel${modelObjCName_}Id && data.${modelObjName_}s) {
-      const u = data.${modelObjName_}s.filter(
-        (${modelObjName_}) => ${modelObjName_}.id === sel${modelObjCName_}Id,
-      )[0]; // as ${modelObjCName_}Partial;
+    const selUserId = selectedUserId_();
+    if (selUserId && data.users) {
+      const u = data.users.filter(
+        (user) => user.id === selUserId,
+      )[0]; // as Types.${modelObjCName_}Partial;
       if (u) {
         snap = {
           ${theInitValues[2]}
@@ -692,16 +1054,6 @@ const clearMessage = () => {
     dBtnDelete = !idOK;
   });
 
-const capitalize = (str:string) => {
-  const spaceUpper = (su:string) => {
-    return \` \${su[1]?.toUpperCase()}\`
-  }
-        
-  return str
-  .replace(/(_\\w)/, spaceUpper)
-  .replace(/\\b[a-z](?=[a-z]{2})/g, (char) => char.toUpperCase())
-}
-    
 const clearForm = (event?: MouseEvent | KeyboardEvent) => {
   event?.preventDefault();
   snap = nullSnap;
@@ -732,7 +1084,7 @@ const enhanceSubmit: SubmitFunction = async ({ action, formData }) => {
     ? "creating ${modelObjName_}..."
     : action.search === '?/update'
     ? "updating ${modelObjName_}..."
-    : "deleting ${modelObjName_}..."
+    : "deleting ${modelObjName_}...";
   if (action.search === '?/delete') {
     utils.hideButtonsExceptFirst([btnDelete, btnCreate, btnUpdate]);
   }
@@ -757,10 +1109,9 @@ const enhanceSubmit: SubmitFunction = async ({ action, formData }) => {
     clearMessage();
   }
 
-      // ${buttons_()}
-  }
-  let owner = true;
-  const toggleColor = (event: MouseEvent, caption?: string) => {
+}
+let owner = true;
+const toggleColor = (event: MouseEvent, caption?: string) => {
   console.log('caption', caption)
   const grand = (event.target as HTMLSpanElement)?.parentElement?.parentElement;
   
@@ -775,85 +1126,27 @@ const enhanceSubmit: SubmitFunction = async ({ action, formData }) => {
 </svelte:head>
 ${cr_Activity}
 
-<form action="?/create" method="post" use:enhance={enhanceSubmit}>
-  <div class='form-wrapper'>
-    ${inputBoxes}
-    <div class='buttons-row'>
-      ${buttons}<button onclick={clearForm}>clear form</button>
+<div class="two-column-grid">
+	<div class="left-column">
+    <form action="?/create" method="post" use:enhance={enhanceSubmit}>
+      <div class='form-wrapper'>
+        ${inputBoxes}
+        <div class='buttons-row'>
+          ${buttons}
+          </div>
+        </div>
       </div>
-    </div>
+    </form>
   </div>
-</form>
-<div style="border:0;padding:0; color:green;">
-  This is a list item to be deleted{@render iconHandler(
-    true,
-    'delete item',
-    'fa fa-trash',
-  )}
+  <div class="right-column" onclick={rowSelected} aria-hidden={true}>
+		<!-- argument true to return an array not a string -->
+		{#each data.${modelObjName_}s as r (r.id)}
+			<div class="grid-row">
+				<p>{r.id}: {r.name}</p>
+			</div>
+		{/each}
+	</div>
 </div>
-<div style="border:0;padding:0; color:green;">
-  This is a list item to be deleted by not owner{@render iconHandler(
-    false,
-    'delete item',
-    'fa fa-trash',
-  )}
-</div>
-<div style="border:0;padding:0; color:blue;">
-  This is a list item for toggling color{@render iconHandler(
-    true,
-    'toggle color',
-    'fa-duotone fa-solid fa-paint-roller',
-    (event: MouseEvent) => toggleColor(event, 'toggle color'),
-  )}
-</div>
-
-{#snippet iconHandler(
-  owner: boolean,
-  caption: string,
-  iconClass: string,
-  clickHandler?: Function | undefined,
-)}
-  {#if owner}
-    <CRTooltip {caption}>
-      <span
-        onclick={clickHandler
-          ? (event: MouseEvent) => clickHandler(event, caption)
-          : (event: MouseEvent) =>
-              event.target.parentElement?.parentElement?.parentElement.remove()}
-        aria-hidden={true}
-        style:cursor={owner ? 'pointer' : 'not-allowed'}
-        style="margin=0 0.5rem;font-size:20px;color:cornsilk;border:1px solid gray;border-radius:4px;padding:2px 6px;"
-      >
-        <i class={iconClass}></i>
-      </span>
-    </CRTooltip>
-  {:else}
-    <CRTooltip caption="no owner permission">
-      <span
-        style:cursor={owner ? 'pointer' : 'not-allowed'}
-        style="margin=0 0.5rem;font-size:20px;color:#c3909b;border:1px solid gray;border-radius:4px;padding:2px 6px;"
-      >
-        <i class={iconClass}></i>
-      </span>
-    </CRTooltip>
-  {/if}
-{/snippet}
-<pre>How to use an Font Awesome iconHandler -- a child of a parent
-It is rendered as @render iconHandler(boolean, caption, faIconClass, clickHandler?)
-The fist argument when true allows action to be carried on, otherwise
-it shows a 'not-allowed pointer' with tooltip 'no owner permission'.
-The caption argument is a tooltip text displayed with delay when icon is hovering.
-The faIconClass is the class name copied from an https://fontawesome.com/ page when
-searching for an icon and extracting className from icon <i class="className"
-  ></i>.
-A clickHandler is an optional function reference to be called when icon is
-clicked. As the icon is deeply buried in CRTooltip and span elements the user's 
-clickHandler, which gets mouse event, should access its grandParent wrapper as
-const parent = (event.target as HTMLSpanElement)?.parentElement.parentElement;
-There are three examples above two to delete the parent with owner and not owner
-and the third to toggle parent's color. 
-</pre>
-
 <style lang='scss'>
   .form-wrapper {
     display: flex;
@@ -885,16 +1178,50 @@ and the third to toggle parent's color.
   .pink{
     color: pink;
   }
+  .two-column-grid {
+		display: grid;
+		width: 90vw;
+		grid-template-columns: 1fr 1.5fr;
+		column-gap: 1rem;
+	}
+	.grid-row {
+		padding: 0 1rem;
+		margin: 0;
+		outline: none;
+		border: none;
+		height: 1.2rem;
+		line-height: 2rem;
+		p {
+			padding: 0 1rem 0 2rem;
+			&:hover {
+				background-color: cornsilk;
+				cursor: pointer;
+			}
+			height: 1.6rem;
+		}
+	}
+	.left-column {
+		border: 1px solid gray;
+		border-radius: 8px;
+		height: 75vh;
+	}
+	.right-column {
+		height: 75vh;
+		display: grid;
+		justify-content: start;
+	}
   CRTooltip:has(> span) {
     display: flex;
     align-items: baseline;
   }
 </style>
-`
-  // outputChannel.appendLine('+page.svelte'+ plusPageSvelte); outputChannel.show();
-  const pageSveltePath = path.join(routeNamePath, '/+page.svelte');
-  // outputChannel.appendLine('save +page.svelte at '+ pageSveltePath); outputChannel.show();
-  fs.writeFileSync(pageSveltePath, plusPageSvelte, 'utf8');
+`;
+const pageSveltePath = path.join(routeNamePath, '/+page.svelte');
+  if (modelObjCName_ === 'User'){
+    fs.writeFileSync(pageSveltePath, plusUserSvelte, 'utf8');
+  }else{
+    fs.writeFileSync(pageSveltePath, plusPageSvelte, 'utf8');
+  }
 }
 // function createUtils(routeName:String, fields:string[]) {
   
@@ -943,278 +1270,321 @@ and the third to toggle parent's color.
 // }
 
 function createCRInput(){
-  const componentsPath = ensureComponentPath()
-  if (!componentsPath) return
-  const crInput = `<script lang="ts">
-  //  components/CRInput.svelte
-  import { browser } from '$app/environment';
-  import * as utils from '$lib/utils';
-  import { onMount } from 'svelte';
-  type TExportValueOn =
-    | 'keypress'
-    | 'keypress|blur'
-    | 'enter'
-    | 'blur'
-    | 'enter|blur';
-
-  type PROPS = {
-    title: string;
-    width?: string;
-    height?: string;
-    fontsize?: string;
-    margin?: string;
-    type?: string|number|Date|boolean|password|time|text|tel|range|radio|checkbox;
-    value?: string;
-    required?: boolean;
-    capitalize?: boolean;
-    err?: string[] | undefined;
-    onButtonNext?: () => void;
-    exportValueOn?: TExportValueOn;
-    onInputIsReadyCallback?: () => void; // call parent when onInputIsReadyCallback for 'enter', otherwise on every key
-    clearOnInputIsReady?: boolean; // clear input value on onInputIsReadyCallback
-  };
-
-  let {
-    title,
-    width = '16rem',
-    height = '2.5rem',
-    fontsize = '16px',
-    margin = '0',
-    type,
-    value = $bindable(),
-    required = false,
-    err = undefined,
-    onButtonNext,
-    exportValueOn = 'enter',
-    onInputIsReadyCallback = undefined,
-    capitalize = false,
-    clearOnInputIsReady = false,
-  }: PROPS = $props();
-
-  export const capitalizes = (str) => {
-    const spaceUpper = (su) => {
-      // getting _string so return ' String' with a leading space
-      return \` \${su[1]?.toUpperCase()}\`;
-    };
-    let s = str[0]?.toUpperCase() + str.slice(1);
-    return (
-      s
-        .replace(/\b[a-z](?=[a-z]{2})/g, (char) => char.toUpperCase())
-        // snake_string_format replace _ with space
-        .replace(/(_\w)/, spaceUpper)
-    );
-  };
-
-  // @ts-expect-error
-  String.prototype.capitalizes = function () {
-    return capitalizes(this);
-  };
-  // NOTE: enter non breaking unicode space: type 00A0 and press Alt + X
-  // here we held between apostrophes three non breaking spaces
-  title = '  ' + capitalizes(title);
-  let requiredStr = required ? \`\${title} is required\` : '';
-
-  (function () {
-    // IIFE
-    exportValueOn = exportValueOn.toLowerCase() as TExportValueOn;
-    // make combination be with 'enter|blur' and 'keypress|blur' if inverted
-    const parts = exportValueOn.split('|');
-    if (parts.length > 1 && parts[0] === 'blur') {
-      exportValueOn = \`\${parts[1]}|\${parts[0]}\` as TExportValueOn;
-    }
-  })();
-  const topPosition = \`\${-1 * Math.floor(parseInt(fontsize) / 3)}px\`;
-
-  if (browser) {
-    try {
-      utils.setCSSValue('--INPUT-BOX-LABEL-TOP-POS', topPosition);
-      if (width) utils.setCSSValue('--INPUT-COMRUNNER-WIDTH', width as string);
-      if (height)
-        utils.setCSSValue('--INPUT-COMRUNNER-HEIGHT', height as string);
-      if (fontsize)
-        utils.setCSSValue('--INPUT-COMRUNNER-FONT-SIZE', fontsize as string);
-      width = utils.getCSSValue('--INPUT-COMRUNNER-WIDTH') as string;
-    } catch (err) {
-      console.log('<InputBox get/setCSSValue', err);
-    }
+  const componentsPath = ensureComponentPath();
+  if (!componentsPath) {
+    return;
   }
+  const crInput = `<script lang="ts">
+	//  components/CRInput.svelte
+	import { browser } from '$app/environment';
+	import * as utils from '$lib/utils';
+	import { onMount } from 'svelte';
+	type TExportValueOn = 'keypress' | 'keypress|blur' | 'enter' | 'blur' | 'enter|blur';
 
-  const onFocusHandler = (event: FocusEvent) => {
-    event.preventDefault();
-    labelStyle = 'opacity:1;top:3px;';
-  };
+	type PROPS = {
+		title: string;
+		width?: string;
+		height?: string;
+		fontsize?: string;
+		margin?: string;
+		type?:
+			| string
+			| number
+			| Date
+			| boolean
+			| password
+			| time
+			| text
+			| tel
+			| range
+			| radio
+			| checkbox
+			| textarea;
+		rows?: string;
+		cols?: string;
+		value?: string | number;
+		required?: boolean;
+		capitalize?: boolean;
+		err?: string[] | undefined;
+		onButtonNext?: () => void;
+		exportValueOn?: TExportValueOn;
+		onInputIsReadyCallback?: () => void; // call parent when onInputIsReadyCallback for 'enter', otherwise on every key
+		clearOnInputIsReady?: boolean; // clear input value on onInputIsReadyCallback
+	};
 
-  const onBlurHandler = (event: FocusEvent) => {
-    event.preventDefault();
+	let {
+		title,
+		width = '16rem',
+		height = '2.5rem',
+		fontsize = '16px',
+		margin = '0',
+		type = 'text',
+		rows = '6',
+		cols = '30',
+		value = $bindable(),
+		required = false,
+		err = undefined,
+		onButtonNext,
+		exportValueOn = 'enter',
+		onInputIsReadyCallback = undefined,
+		capitalize = false,
+		clearOnInputIsReady = false
+	}: PROPS = $props();
 
-    // no entry yet so no export is ready buy is dirty -- only handle placeholder if entry is required
-    if (value === '') {
-      // input is required so warn the user with pink placeholder required message
-      if (required) {
-        inputEl.placeholder = requiredStr;
-        labelStyle = 'opacity:1; top:3px;';
-        utils.setPlaceholderColor('pink');
-      } else {
-        // input is not required so lower down field label inside the input box
-        labelStyle = 'opacity:0.5;25px';
-      }
-    }
-    if (exportValueOn.includes('blur')) {
-      if (onInputIsReadyCallback) {
-        onInputIsReadyCallback();
-      }
-    }
-  };
-  const onKeyUpHandler = (event: KeyboardEvent) => {
-    event.preventDefault();
-    if (event.key === 'Tab') return;
-    if (capitalize && value) {
-      // NOTE: reactive variable inputbox value does not updates
-      // inputbox value when changed via script, so inputEl.value
-      // as a workaround is updated instead
-      inputEl.value = utils.capitalize(value);
-    }
-    // if keypress is Enter and exportValueOn does not include Enter we return
-    if (exportValueOn.includes('enter') && event.key !== 'Enter') {
-      if (capitalize && value) {
-        value = utils.capitalize(value);
-      }
-      return;
-    }
-    // already prevented blur|keypress and blur|enter
-    // blur always follows if any case
-    if (!'keypress|blur|enter|blur'.includes(exportValueOn) && value) {
-      value = capitalizes(value);
-      return;
-    }
-    if (value && value.length > 0) {
-      if (capitalize) {
-        value = capitalizes(value);
-      }
+	export const capitalizes = (str) => {
+		const spaceUpper = (su) => {
+			// getting _string so return ' String' with a leading space
+			return \` \${su[1]?.toUpperCase()}\`;
+		};
+		let s = str[0]?.toUpperCase() + str.slice(1);
+		return (
+			s
+				.replace(/[a-z](?=[a-z]{2})/g, (char) => char.toUpperCase())
+				// snake_string_format replace _ with space
+				.replace(/(_w)/, spaceUpper)
+		);
+	};
 
-      // if input should be returned
-      // (blur is handled in a separate onBlurHandler)
-      if (
-        exportValueOn.includes('keypress') ||
-        (exportValueOn.includes('enter') && event.key === 'Enter')
-      ) {
-        if (onInputIsReadyCallback) {
-          onInputIsReadyCallback();
-          if (clearOnInputIsReady) {
-            value = '';
-          }
-        }
-      }
-    }
-  };
+	// @ts-expect-error
+	String.prototype.capitalizes = function () {
+		return capitalizes(this);
+	};
+	// NOTE: enter non breaking unicode space:
+	// Press Ctrl+Shift+U, type 00a0, and then press Enter or Space.
+	// here we held between apostrophes three non breaking spaces
+	title = '  ' + capitalizes(title) + '  ';
+	let requiredStr = required ? \`\${title} is required\` : '';
 
-  // input box has a label text instead of a placeholder in order to
-  // move it up on focus, but the text does not set focus on input
-  // element on click -- so we have to set the focus when the label
-  // text is selected
-  let labelStyle = $state('opacity:0.5;top:25px;');
-  let label: HTMLLabelElement;
-  let inputEl: HTMLInputElement;
-  export const setFocus = () => {
-    inputEl.focus();
-  };
+	(function () {
+		// IIFE
+		exportValueOn = exportValueOn.toLowerCase() as TExportValueOn;
+		// make combination be with 'enter|blur' and 'keypress|blur' if inverted
+		const parts = exportValueOn.split('|');
+		if (parts.length > 1 && parts[0] === 'blur') {
+			exportValueOn = \`\${parts[1]}|\${parts[0]}\` as TExportValueOn;
+		}
+	})();
+	const topPosition = \`\${-1 * Math.floor(parseInt(fontsize) / 3)}px\`;
 
-  // parent call to set input box value
-  export const setInputBoxValue = (str: string, blur: boolean = false) => {
-    if (blur) {
-      setTimeout(() => {
-        inputEl.blur();
-      }, 1000);
-    }
-    inputEl.focus();
-    value = str;
-  };
-  onMount(() => {
-    label = document.getElementsByTagName('label')[0] as HTMLLabelElement;
-    setTimeout(() => {
-      if (value && inputEl) {
-        setFocus();
-      }
-    }, 300);
-    if (required) {
-      inputEl.setAttribute('required', 'true');
-    } else {
-      inputEl.removeAttribute('required');
-    }
-  });
+	if (browser) {
+		try {
+			utils.setCSSValue('--INPUT-BOX-LABEL-TOP-POS', topPosition);
+			if (width) utils.setCSSValue('--INPUT-COMRUNNER-WIDTH', width as string);
+			if (height) utils.setCSSValue('--INPUT-COMRUNNER-HEIGHT', height as string);
+			if (fontsize) utils.setCSSValue('--INPUT-COMRUNNER-FONT-SIZE', fontsize as string);
+			width = utils.getCSSValue('--INPUT-COMRUNNER-WIDTH') as string;
+		} catch (err) {
+			console.log('<InputBox get/setCSSValue', err);
+		}
+	}
+
+	const onFocusHandler = (event: FocusEvent) => {
+		event.preventDefault();
+		labelStyle = 'opacity:1;top:3px;z-index:10;';
+	};
+
+	const onBlurHandler = (event: FocusEvent) => {
+		event.preventDefault();
+
+		// no entry yet so no export is ready buy is dirty -- only handle placeholder if entry is required
+		if (value === '') {
+			// input is required so warn the user with pink placeholder required message
+			if (required) {
+				inputEl.placeholder = requiredStr;
+				labelStyle = 'opacity:1; top:3px;z-index:10;';
+				utils.setPlaceholderColor('pink');
+			} else {
+				// input is not required so lower down field label inside the input box
+				labelStyle = 'opacity:0.5;top:25px;z-index:10;';
+			}
+		}
+		if (exportValueOn.includes('blur')) {
+			if (onInputIsReadyCallback) {
+				onInputIsReadyCallback();
+			}
+		}
+	};
+	const onKeyUpHandler = (event: KeyboardEvent) => {
+		event.preventDefault();
+		if (event.key === 'Tab') return;
+		if (capitalize && value) {
+			// NOTE: reactive variable inputbox value does not updates
+			// inputbox value when changed via script, so inputEl.value
+			// as a workaround is updated instead
+			inputEl.value = utils.capitalize(value as string) as string;
+		}
+		// if keypress is Enter and exportValueOn does not include Enter we return
+		if (exportValueOn.includes('enter') && event.key !== 'Enter') {
+			if (capitalize && value) {
+				value = utils.capitalize(value as string);
+			}
+			return;
+		}
+		// already prevented blur|keypress and blur|enter
+		// blur always follows if any case
+		if (!'keypress|blur|enter|blur'.includes(exportValueOn) && value) {
+			value = capitalizes(value);
+			return;
+		}
+		if (value && (value as string).length > 0) {
+			if (capitalize) {
+				value = capitalizes(value);
+			}
+
+			// if input should be returned
+			// (blur is handled in a separate onBlurHandler)
+			if (
+				exportValueOn.includes('keypress') ||
+				(exportValueOn.includes('enter') && event.key === 'Enter')
+			) {
+				if (onInputIsReadyCallback) {
+					onInputIsReadyCallback();
+					if (clearOnInputIsReady) {
+						value = '';
+					}
+				}
+			}
+		}
+	};
+
+	// input box has a label text instead of a placeholder in order to
+	// move it up on focus, but the text does not set focus on input
+	// element on click -- so we have to set the focus when the label
+	// text is selected
+	let labelStyle = $state('opacity:0.5;top:25px;z-index:10;');
+	let label: HTMLLabelElement;
+	let inputEl: HTMLInputElement | HTMLTextAreaElement;
+	export const setFocus = () => {
+		inputEl.focus();
+	};
+
+	export const getInputBoxValue = () => {
+		return typeof value === 'number' ? Number(inputEl.value) : String(inputEl.value);
+	};
+	// parent call to set input box value
+	export const setInputBoxValue = (str: string, blur: boolean = false) => {
+		if (blur) {
+			setTimeout(() => {
+				inputEl.blur();
+			}, 1000);
+		}
+		inputEl.focus();
+		value = str;
+	};
+	$effect(() => {
+		if (required) {
+			inputEl.setAttribute('required', 'true');
+		} else {
+			inputEl.removeAttribute('required');
+		}
+	});
+	onMount(() => {
+		label = document.getElementsByTagName('label')[0] as HTMLLabelElement;
+		setTimeout(() => {
+			if (value && inputEl) {
+				setFocus();
+			}
+		}, 300);
+		if (required) {
+			inputEl.setAttribute('required', 'true');
+			inputEl.setAttribute('required', 'true');
+		} else {
+			inputEl.removeAttribute('required');
+		}
+	});
 </script>
 
 <div class="input-wrapper" style="margin:{margin};">
-  <input
-    id="inp"
-    bind:this={inputEl}
-    type={type ? type : 'text'}
-    required
-    bind:value
-    onkeyup={onKeyUpHandler}
-    onfocus={onFocusHandler}
-    onblur={onBlurHandler}
-    disabled={false}
-  />
-  <label
-    for="inp"
-    onclick={setFocus}
-    aria-hidden={true}
-    style={\`\${labelStyle}\`}
-  >
-    {title}
-    <span class="err">
-      {err ? \` - \${err}\` : ''}
-    </span>
-  </label>
+	{#if type === 'textarea'}
+		<textarea
+			id="inp"
+			bind:this={inputEl}
+			rows={Number(rows)}
+			cols={Number(cols)}
+			required
+			bind:value
+			onkeyup={onKeyUpHandler}
+			onfocus={onFocusHandler}
+			onblur={onBlurHandler}
+			disabled={false}
+		>
+		</textarea>
+	{:else}
+		<input
+			id="inp"
+			bind:this={inputEl}
+			type={type ? type : 'text'}
+			required
+			bind:value
+			onkeyup={onKeyUpHandler}
+			onfocus={onFocusHandler}
+			onblur={onBlurHandler}
+			disabled={false}
+		/>
+	{/if}
+	<label for="inp" onclick={setFocus} aria-hidden={true} style={\`\${labelStyle}\`}>
+		{title}
+		<span class="err">
+			{err ? \` - \${err}\` : ''}
+		</span>
+	</label>
 </div>
 
 <style lang="scss">
-  :root {
-    --INPUT-COMRUNNER-WIDTH: 16rem;
-    --INPUT-BOX-LABEL-TOP-POS: -1px;
-    --INPUT-COMRUNNER-HEIGHT: 2.5rem;
-    --INPUT-COMRUNNER-FONT-SIZE: 16px;
-  }
+	:root {
+		--INPUT-COMRUNNER-WIDTH: 16rem;
+		--INPUT-BOX-LABEL-TOP-POS: -1px;
+		--INPUT-COMRUNNER-HEIGHT: 2rem !important;
+		--INPUT-COMRUNNER-FONT-SIZE: 16px;
+		// --BACKGROUND-COLOR: white;
+	}
 
-  .input-wrapper {
-    position: relative;
-    width: max-content;
-    /* adjust label to look like placeholder */
-    padding-top: 0.8rem;
-    label {
-      position: absolute;
-      left: 15px;
-      font-size: var(--INPUT-COMRUNNER-FONT-SIZE);
-      color: var(--INPUT-COLOR);
-      background-color: var(--INPUT-BACKGROUND-COLOR);
-      transition: 0.5s;
-    }
-    input {
-      display: inline-block;
-      width: var(--INPUT-COMRUNNER-WIDTH);
-      height: var(--INPUT-COMRUNNER-HEIGHT);
-      font-size: var(--INPUT-COMRUNNER-FONT-SIZE);
-      padding: 0 10px;
-      margin: 0;
-      color: var(--TEXT-COLOR);
-      &:focus {
-        color: var(--INPUT-FOCUS-COLOR);
-      }
-      &:focus ~ label,
-      &:valid ~ label {
-        top: var(--INPUT-BOX-LABEL-TOP-POS);
-        font-size: var(--INPUT-COMRUNNER-FONT-SIZE);
-        opacity: 1;
-      }
-    }
-  }
+	.input-wrapper {
+		position: relative;
+		width: max-content;
+		/* adjust label to look like placeholder */
+		padding-top: 0.8rem;
+		label {
+			position: absolute;
+			left: 15px;
+			font-size: var(--INPUT-COMRUNNER-FONT-SIZE);
+			color: var(--INPUT-COLOR);
+			background-color: var(--BACKGROUND-COLOR);
+			transition: 0.5s;
+		}
+		textarea {
+			outline: none;
+			background-color: var(--BACKGROUND-COLOR);
+			border: 1px solid gray;
+		}
+		input {
+			display: inline-block;
+			width: var(--INPUT-COMRUNNER-WIDTH);
+			height: var(--INPUT-COMRUNNER-HEIGHT);
+			font-size: var(--INPUT-COMRUNNER-FONT-SIZE);
+			padding: 0 10px;
+			margin: 0;
+			outline: none;
+			color: var(--TEXT-COLOR);
+			border: 1px solid gray;
+			background-color: var(--BACKGROUND-COLOR);
+			&:focus {
+				color: var(--INPUT-FOCUS-COLOR);
+			}
+			&:focus ~ label,
+			&:valid ~ label {
+				top: var(--INPUT-BOX-LABEL-TOP-POS);
+				font-size: var(--INPUT-COMRUNNER-FONT-SIZE);
+				opacity: 1;
+			}
+		}
+	}
 
-  .err {
-    color: pink;
-    /* when placeholder moves on top it makes space on the right of 0.2rem*/
-    padding: 1px 0.2rem;
-  }
+	.err {
+		color: pink;
+		/* when placeholder moves on top it makes space on the right of 0.2rem*/
+		padding: 1px 0.2rem;
+	}
 </style>
 `;
   const crInputPath = path.join(componentsPath, 'CRInput.svelte')
@@ -1371,7 +1741,7 @@ function createCRSpinner(){
   }
 </style>
 `;
-  const crSpinnerPath = path.join(componentsPath, 'CRSpinner.svelte')
+const crSpinnerPath = path.join(componentsPath, 'CRSpinner.svelte')
   fs.writeFileSync(crSpinnerPath, crSpinner, 'utf8');
 }
 
@@ -1511,7 +1881,7 @@ function createCRActivity(){
 </style>
 `;
 
-  const crActivityPath = path.join(componentsPath, 'CRActivity.svelte')
+const crActivityPath = path.join(componentsPath, 'CRActivity.svelte')
   fs.writeFileSync(crActivityPath, crActivity, 'utf8');
 }
 
@@ -1603,7 +1973,7 @@ CRTooltip could accept the following props, though all are optional
     }: IProps,
   ) => {
     const opacity = +getComputedStyle(node).opacity;
-    const m = getComputedStyle(node).transform.match(/scale\(([0-9.]+)\)/);
+    const m = getComputedStyle(node).transform.match(/scale(([0-9.]+))/);
     const scale = m ? Number(m[1]) : 1;
     const is = 1 - baseScale;
     // transform: translate uses matrix's last two entries for translate x and y
@@ -1675,7 +2045,7 @@ CRTooltip could accept the following props, though all are optional
   }
 
   const getPreferred = () => {
-    return preferredPos.replace(/\s+/g, '').split(',') as string[];
+    return preferredPos.replace(/s+/g, '').split(',') as string[];
   };
 
   let visible = $state(false);
@@ -1959,7 +2329,7 @@ CRTooltip could accept the following props, though all are optional
 </style>
 `;
 
-  const crTooltipPath = path.join(componentsPath, 'CRTooltip.svelte')
+const crTooltipPath = path.join(componentsPath, 'CRTooltip.svelte')
   fs.writeFileSync(crTooltipPath, crTooltip, 'utf8');
 }
 function createSummaryDetail(){
@@ -2036,7 +2406,7 @@ function createSummaryDetail(){
   }
 </style>
 `;
-  const crSummaryDetailPath = path.join(componentsPath, 'CRSummaryDetail.svelte')
+const crSummaryDetailPath = path.join(componentsPath, 'CRSummaryDetail.svelte')
   fs.writeFileSync(crSummaryDetailPath, crSummaryDetail, 'utf8');
 }
 
@@ -2064,50 +2434,50 @@ async function findPrismaSchemaRoot(): Promise<string | null> {
       currentPath = parentPath;
     }
   }
-    return null;
-  }
+  return null;
+}
 
-  function sortObjectKeys<T>(obj: Record<string, T>): Record<string, T> {
-    return Object.fromEntries(
-      /*
-        "base" ignores case and diacritics (so User, user, Úser, üser all sort together).
-        "accent" would keep diacritics (ú vs u) but ignore case.
-        "case" would respect case but ignore accents.
-        "variant" is the strictest (default) and respects everything.
-        numeric sorts asc f10, f2 as f2 f10 -- not as the ascii's f10 f2
-      */
-      Object.entries(obj).sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }))
-    );
-  }
+function sortObjectKeys<T>(obj: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(
+    /*
+      "base" ignores case and diacritics (so User, user, Úser, üser all sort together).
+      "accent" would keep diacritics (ú vs u) but ignore case.
+      "case" would respect case but ignore accents.
+      "variant" is the strictest (default) and respects everything.
+      numeric sorts asc f10, f2 as f2 f10 -- not as the ascii's f10 f2
+    */
+    Object.entries(obj).sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }))
+  );
+}
 
-  // fieldInfo is a line following field names
-  type FieldInfo = {
-    type: string;
-    prismaSetting: string; // everything after the type
+// fieldInfo is a line following field names
+type FieldInfo = {
+  type: string;
+  prismaSetting: string; // everything after the type
+};
+
+// every model/table has fieldName  and fieldInfo
+type ModelInfo = {
+  fields: {
+    [fieldName: string]: FieldInfo;
   };
+  modelAttributes: string[]; // e.g. ["@@map(\"users\")", "@@index([email])"]
+};
 
-  // every model/table has fieldName  and fieldInfo
-  type ModelInfo = {
-    fields: {
-      [fieldName: string]: FieldInfo;
-    };
-    modelAttributes: string[]; // e.g. ["@@map(\"users\")", "@@index([email])"]
-  };
+// there are many models/tables in schema.prisma
+type SchemaModels = {
+  [modelName: string]: ModelInfo;
+};
 
-  // there are many models/tables in schema.prisma
-  type SchemaModels = {
-    [modelName: string]: ModelInfo;
-  };
 
-  
-  let strModelNames = '|';
+let strModelNames = '|';
 
-  function parsePrismaSchema(schemaContent: string): SchemaModels {
-    const models: SchemaModels = {};
-    const modelRegex = /model\s+(\w+)\s*{([^}]*)}/gms;
+function parsePrismaSchema(schemaContent: string): SchemaModels {
+  const models: SchemaModels = {};
+  const modelRegex = /model\s+(\w+)\s*{([^}]*)}/gms;
 
-    let modelMatch;
-    while ((modelMatch = modelRegex.exec(schemaContent)) !== null) {
+  let modelMatch;
+  while ((modelMatch = modelRegex.exec(schemaContent)) !== null) {
     const [, modelName, body] = modelMatch;
     const fields: { [field: string]: FieldInfo } = {};
     const modelAttributes: string[] = [];
@@ -2259,7 +2629,6 @@ export async function activate(context: vscode.ExtensionContext) {
   // }
   // Create output channel for webview logs
   const outputChannel = vscode.window.createOutputChannel('WebView Logs');
-
 
   const prismaSchemaRoot = await findPrismaSchemaRoot();
   if (!prismaSchemaRoot){
@@ -2513,6 +2882,9 @@ export async function activate(context: vscode.ExtensionContext) {
         // create accompanying +page.server.ts file
         const pageServerPath = path.join(routesPath, routeName_, '/+page.server.ts');
         fs.writeFileSync(pageServerPath, getServerPage(), 'utf8');
+        
+        const hooksPath = path.join(rootPath, '/src/hooks.server.ts');
+        fs.writeFileSync(hooksPath, getHooksPage(), 'utf8');
 
         const exportDbPath = path.join(rootPath, '/src/lib/server/db.ts');
         fs.writeFileSync(exportDbPath, `
@@ -2567,7 +2939,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const helpersPage = path.join(utilsPath as string, '/helpers.ts');
   if (!fs.existsSync(helpersPage)){
     fs.writeFileSync(helpersPage, `// helpers.ts
-
+import { browser } from '$app/environment';
 export const sleep = async (ms: number) => {
   return new Promise((resolve) => {
     setTimeout(() => {
@@ -2578,6 +2950,19 @@ export const sleep = async (ms: number) => {
   })
 }
 
+export const resetButtons = (buttons: HTMLButtonElement[]) => {
+  try {
+    buttons.forEach((btn) => {
+      btn.classList.remove('hidden')
+      btn.classList.add('hidden')
+      try {
+        btn.hidden = true
+      } finally {
+      }
+    })
+  } catch { }
+}
+
 export const hideButtonsExceptFirst = (buttons: HTMLButtonElement[]) => {
   resetButtons(buttons);
   if (buttons[0] && buttons[0].classList.contains('hidden')) {
@@ -2585,6 +2970,17 @@ export const hideButtonsExceptFirst = (buttons: HTMLButtonElement[]) => {
     buttons[0].hidden = false
   }
 }
+
+export const getCSSValue = (varName: string): string | undefined => {
+  if (!browser) return;
+  try {
+    const root = document.documentElement;
+    const value = getComputedStyle(root).getPropertyValue(varName).trim();
+    return value || undefined;
+  } catch (err) {
+    console.log('getCSSValue error:', (err as Error).message);
+  }
+};
 
 export const setCSSValue = (varName: string, value: string) => {
   try {
@@ -2596,6 +2992,25 @@ export const setCSSValue = (varName: string, value: string) => {
     }
   } catch (err: any) {
     console.log('setCSSValue', err)
+  }
+}
+
+export const setTextColor = (varName: string, color: string) => {
+  try {
+    if (browser) {
+      const root = document.querySelector(':root')
+      if (root) {
+        root.style.setProperty(varName, color)
+      }
+    }
+  } catch (err) {
+    console.log('setTextColor', err)
+  }
+}
+
+Number.prototype[Symbol.iterator] = function* () {
+  for (let i = 0; i < this; i++) {
+    yield i
   }
 }
 
@@ -3650,6 +4065,7 @@ created in the route specified in the Route Name input box.
 </script>
 </body>
 
-</html>`;
+</html>
+`;
 }
 
