@@ -3,14 +3,30 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 // to find the work folder path
-import * as child_process from 'child_process';
+import * as childProcess from 'child_process';
+import pluralize from 'pluralize';
 
 let rootPath = '';
 let routesPath = '';
 let routeName_ ='';
 let modelObjName_ = '';
+let modelObjName_s = '';
 let modelObjCName_ = '';
 let fields_:string[]=[];
+
+interface IStringBoolean {
+  [key: string]: boolean;
+}
+
+interface ISelectFields {
+  [key: string]: string;
+}
+interface ISelectBlocks {
+  [key: string]: ISelectFields;
+}
+let selectBlocks: ISelectBlocks = {};
+
+let idIsNumeric_ = false;
 let embellishments_:string[]=[];
 let terminal: vscode.Terminal | undefined;
 let noPrismaSchema = false;
@@ -18,15 +34,18 @@ let installPartTwoPending = false;
 let pm = 'unknown';
 let ex = 'unknown';
 // {} has [key,value] easy to select a model via key
-// for (const [modelName, fields] of Object.entries(models)) {   // iterating
+// for (const [modelName, fields] of Object.entries(models))    // iterating
 type Models = {
   [modelName: string]: string[];
 }
 const modelsFieldNames: Models = {};
-function fNamesList(){
-  let fList = ``
+function fNamesList(excludeName: string = ''){
+  let fList = ``;
   for(const field of fields_){
-    fList += `${field.split(':')[0]}, `;
+    const fieldName = field.split(':')[0];
+    if (fieldName !== excludeName){
+      fList += `${fieldName}, `;
+    }
   }
   return fList.slice(0,-2)
 }
@@ -50,10 +69,10 @@ function dbSelectListDataEntry(kind:string){
 			return (fields_.join()+',').replace(/:/g, '?:').replace(/:\s*?\w+,/g,', ').slice(0,-2);
 		}
     case 'formData': {
-      return (fields_.join()+',').replace(/,/g, ',\n\t\t\t');
+      return (fields_.join()+',').replace(/,/g, ',\n\t\t\t').slice(0,-4);
     }
     case '?formData': {
-      return (fields_.join()+',').replace(/:/g, '?:').replace(/,/g, ',\n\t\t');
+      return (fields_.join()+',').replace(/:/g, '?:').replace(/,/g, ',\n\t\t\t').slice(0,-4);
     }
 		case 'DataEntry':{
 			return fields_.join()
@@ -69,25 +88,210 @@ function dbSelectListDataEntry(kind:string){
 		}
 	}
 }
-function fieldTypeList(){
-  let fieldTypeList = ``
+
+const ordered = [
+  'id', 'authorId', 'userId', 'employeeId', 'customerId', 'ownerId',
+  'firstName', 'lastName', 'middleName', 'name', 'email',
+  'password', 'role', 'updatedAt'
+];
+
+function sortArrByOrdered(arr: string[]) {
+  const orderedPart = ordered.map((key) => arr.find((item) => item === `${key}`)).filter(Boolean);
+  const leftoverPart = arr.filter((item) => {
+    const key = item.split(':')[0].trim();
+    return !ordered.includes(key);
+  });
+  return [...orderedPart, ...leftoverPart];
+}
+
+function createSelectBlocks(partialTypes: string): void {
+  let blocks: ISelectBlocks = {};
+  const typeBlocks = [
+    ...partialTypes.replace(/export type\s*|Partial/g, '').matchAll(/(\w+)\s*=\s*{([\s\S]*?)}/g)
+  ];
+  for (const [, name, body] of typeBlocks) {
+    let props = sortArrByOrdered([...body.matchAll(/(\w+)\s*:/g)].map((m) => m[1]));
+    blocks[name] = Object.fromEntries(props.map((p) => [p, true]));
+  }
+  selectBlocks = blocks;
+}
+
+function fieldsList(block:string){
+	return Object.keys(selectBlocks[block])
+  .join()
+  .replace(/password,?/,'')
+  .replace(/,/g, ': true, ')+': true';
+}
+
+function fieldTypeList(excludeName: string = ''){
+  let fieldTypeList = ``;
   for(const field of fields_){
-    fieldTypeList += `${field}
-    `;
+    if (field !== excludeName){
+      fieldTypeList += `${field}
+      `;
+    }
 	}
-	return fieldTypeList.slice(0,-4);
+	return fieldTypeList.slice(0,-5);
 }
 function passwordHashAndToken(){
 	if (modelObjName_ !== 'user') {
-    return; // TODO
+    return ''; // TODO
   }  
 	return `passwordHash: await bcrypt.hash(password, 10),
 				userAuthToken: crypto.randomUUID()
 		`.slice(0,-3)
 }
+function getHelpersPage(){
+  return `// helpers.ts
+import { browser } from '$app/environment';
+export const sleep = async (ms: number) => {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      // ms here is a dummy but required by
+      // resolve to send out some value
+      resolve(ms)
+    }, ms)
+  })
+}
+
+export const resetButtons = (buttons: HTMLButtonElement[]) => {
+  try {
+    buttons.forEach((btn) => {
+      btn.classList.remove('hidden')
+      btn.classList.add('hidden')
+        btn.hidden = true
+    })
+  } catch (err: string | Error) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.log('resetButtons', msg)
+  }
+}
+
+export const hideButtonsExceptFirst = (buttons: HTMLButtonElement[]) => {
+  resetButtons(buttons);
+  if (buttons[0] && buttons[0].classList.contains('hidden')) {
+    buttons[0].classList.toggle('hidden')
+    buttons[0].hidden = false
+  }
+}
+
+export const getCSSValue = (varName: string): string | undefined => {
+  if (!browser) return;
+  try {
+    const root = document.documentElement;
+    const value = getComputedStyle(root).getPropertyValue(varName).trim();
+    return value || undefined;
+  } catch (err: string | Error) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.log('getCSSValue', msg)
+  }
+};
+
+export const setCSSValue = (varName: string, value: string) => {
+  try {
+    if (browser) {
+      const root = document.querySelector(':root') as Node
+      if (root) {
+        root.style.setProperty(varName, value)
+      }
+    }
+  } catch (err: string | Error) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.log('setCSSValue', msg)
+  }
+}
+
+export const setTextColor = (varName: string, color: string) => {
+  try {
+    if (browser) {
+      const root = document.querySelector(':root')
+      if (root) {
+        root.style.setProperty(varName, color)
+      }
+    }
+  } catch (err: string | Error) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.log('setTextColor', msg)
+  }
+}
+
+Number.prototype[Symbol.iterator] = function* () {
+  for (let i = 0; i < this; i++) {
+    yield i
+  }
+}
+
+export const setPlaceholderColor = (color: string) => {
+  if (browser) {
+    document.documentElement.style.setProperty('--PLACEHOLDER-COLOR', color)
+    setTextColor('--MESSAGE-COLOR', color === 'red' ? 'pink' : color)
+  }
+}
+
+export const capitalize = (str: string) => {
+  const spaceUpper = (su: string) => {
+    // getting _string so return ' John' with a leading space
+    return \` \${su[1]?.toUpperCase()}\`
+  }
+  let s = str[0]?.toUpperCase() + str.slice(1)
+  return s
+    .replace(/\b[a-z](?=[a-z]{2})/g, (char) => char.toUpperCase())
+    // snake_string_format replace _ with space
+    .replace(/(_\w)/, spaceUpper)
+}
+
+String.prototype.capitalize = function () {
+  return capitalize(this as string)
+}
+
+// compare $state(object) with object
+export function sameDeep(v1: any, v2: any): boolean {
+  if (v1 === v2) return true;
+
+  if (v1 instanceof Date && v2 instanceof Date)
+    return v1.getTime() === v2.getTime();
+
+  if (typeof v1 !== 'object' || typeof v2 !== 'object' || v1 == null || v2 == null)
+    return false;
+
+  const keys1 = Object.keys(v1);
+  const keys2 = Object.keys(v2);
+  if (keys1.length !== keys2.length) return false;
+
+  for (const k of keys1) {
+    if (!same(v1[k], v2[k])) return false;
+  }
+
+  return true;
+}
+
+export function same<T extends Record<string, any>>(v1: T, v2: T): boolean {
+  if (v1 === v2) return true;
+
+  const keys = Object.keys(v1);
+  if (keys.length !== Object.keys(v2).length) return false;
+
+  for (const k of keys) {
+    if (v1[k] !== v2[k]) return false;
+  }
+  return true;
+}`;
+}
+
+function getPrismaClient(){
+  return `
+import { PrismaClient } from '@prisma/client';
+// export const db = new PrismaClient();
+export const db = new PrismaClient({
+  log: ['warn', 'error']
+});
+// log: ['query', 'info', 'warn', 'error']
+`;
+}
+
 function getPartialTypes(fullTypes: string) {
 	fullTypes = fullTypes.replace(/(\s*?).*?password.*?:/mg,'$1\t\tpassword:').replace(/export type (\w+)\s*=/g, 'export type $1Partial =');
-	const allowedFields = 'String|Number|Boolean|Date|Role|password';
+	const allowedFields = 'string|number|boolean|Date|Role|password';
 	const excludedFields = '[]|createdAt|Hash|Token|Post|Blog|User|Category|Todo|Profile|.*?Id';
 	let allowedRegex = new RegExp(allowedFields);
 	let excludedRegex = new RegExp(excludedFields);
@@ -96,14 +300,16 @@ function getPartialTypes(fullTypes: string) {
 		let nok = field.match(excludedRegex);
 		return ok && !nok;
 	}
+  // as the fullTypes begin with split string 'export type' the first
+  // entry will hold an empty type , so skip it with sp.slice(1)
 	const sp = fullTypes.split('export type');
-	let f =''
-	sp.slice(2).forEach((type: string) => {
+	let f ='';
+	sp.slice(1).forEach((type: string) => {
 		let fields = type.split('\n');
 		f += 'export type '+ fields[0]+ '\n';
 		fields.slice(1,-1).forEach(field => {
 			if (uiField(field)){
-					f += field.replace(/;/, ' | null;\n');
+					f += field.replace(/;/, ' | null;\n')
 				}
 		})
 		f += '};\n';
@@ -188,23 +394,25 @@ function getHooksPage() {
     } catch (err) {
       console.log('hook getUser', err);
     }
-    console.log('hooks locals',event.locals);
+    // console.log('hooks locals',event.locals);
     return await resolve(event);
   }) satisfies Handle;`;
 };
 
 function getServerPage(){
-  let imp = `import { db } from '$lib/server/db';
+  let imp = `
+import { db } from '$lib/server/db';
 import type { PageServerLoad } from './$types';
 import { error, fail, redirect } from '@sveltejs/kit';
 import type RequestEvent from '@sveltejs/kit';
 import type { Actions } from '@sveltejs/kit';
-import bcrypt from 'bcrypt'
-import * as utils from '$lib/utils';;
 import { fail } from '@sveltejs/kit';
+import * as utils from '$lib/utils';
+import* as Types from '$lib/types/types';
 
+const idIsNumeric = ${idIsNumeric_};
 export const load: PageServerLoad = (async ({locals}) => {
-	const ${modelObjName_} = await db.${modelObjName_}.findMany({
+	const ${modelObjName_s} = await db.${modelObjName_}.findMany({
 		select:{
       ${fNamesList().replace(/password,?\s*?/,'').replace(/\s+/g, '').replace(/,/g, `: true,
       `)+ ': true'}
@@ -212,121 +420,130 @@ export const load: PageServerLoad = (async ({locals}) => {
     orderBy:{
 			id: 'asc'
 		}
-  });
-	if (! ${modelObjName_}s) {
-		return fail(400, { message: 'No  ${modelObjName_}s in db' });
+  }) as Types.${modelObjCName_}Partial[];
+
+	if (! ${modelObjName_s}) {
+		return fail(400, { message: 'No  ${modelObjName_s} in db' });
 	}
-  const users = await db.user.findMany();
+  const users = await db.user.findMany({
+    select: {${fieldsList('User')}}
+  });
 	return {
     locals,
     users,
-		${modelObjName_}s
+		${modelObjName_s}
 	};
 }) satisfies PageServerLoad;
 
 export const actions: Actions = {
 	create: async ({ request }) => {
-    const { ${fNamesList()} } = Object.fromEntries(
-		await request.formData()
-	) as {
-    ${fieldTypeList()}
-	};
-	if (!(${fNamesList().replace(/,/g, ' &&')})) {
-		return fail(400, {
-			data: {
-				${fNamesList().replace(/password,?\s*?/,'')}
-			},
-			message: 'Insufficient data supplied'
-		})
-	}
-	const ${modelObjName_}Exists = await db.${modelObjName_}.findFirst({
-			where: {
-				${fNamesList().replace(/password,?\s*?/, '').replace(/role,?\s*?/, '')}
-			}
-		})
-		if (${modelObjName_}Exists) {
-			return fail(400, {
-				data: { ${fNamesList().replace(/password,?\s*?/,'')} },
-				message: 'Unacceptable data'
-			})
-		} else {
-			const ${modelObjName_} = await db.${modelObjName_}.create({
-				data: {
-					${fNamesList().replace(/password,?\s*?/, '')},
-					${passwordHashAndToken()}
-				}
-			})
-		}
-		return {
-			success: true,
-			message: '${modelObjName_} created successfully'
-		}
+    const { ${fNamesList('id')} } = Object.fromEntries(
+      await request.formData()
+    ) as {
+      ${fieldTypeList('id')}
+    };
+
+    if (!(${fNamesList('id').replace(/,/g, ' &&')})) {
+      return fail(400, {
+        data: {
+          ${fNamesList('id').replace(/password,?\s*?/,'')}
+        },
+        message: 'Insufficient data supplied'
+      })
+    }
+
+    const ${modelObjName_}Exists = await db.${modelObjName_}.findFirst({
+      where: {
+        ${fNamesList('id').replace(/password,?\s*?/, '').replace(/role,?\s*?/, '')}
+      }
+    })
+    if (${modelObjName_}Exists) {
+      return fail(400, {
+        data: { ${fNamesList('id').replace(/password,?\s*?/,'')} },
+        message: 'Unacceptable data'
+      })
+    }
+    const ${modelObjName_} = await db.${modelObjName_}.create({
+      data: {
+        ${fNamesList('id').replace(/password,?\s*?/, '')},
+        ${passwordHashAndToken()}
+      }
+    })
+    await utils.sleep(2000);
+    return {
+      success: true,
+      ${modelObjName_},
+      message: '${modelObjName_} created successfully'
+    }
   },
   // ------------------------------------------------
   update: async ({ request }) => {
-		const input_data = Object.fromEntries(
-			await request.formData()
-		) as {
+    const data = Object.fromEntries(
+      await request.formData()
+    ) as {
       ${dbSelectListDataEntry('?formData')}
     }
+    if (idIsNumeric){
+        data.id = Number(data.id)
+    }
+    const { ${dbSelectListDataEntry('List')} } = data
+    if (!(${dbSelectListDataEntry('List').replace(/,/g, ' || ')} )) {
+      return fail(400, {
+        data: { ${dbSelectListDataEntry('List').replace(/password./,'')} },
+        message: 'Insufficient data supplied'
+      })
+    }
 
-		const { ${dbSelectListDataEntry('List')} } = input_data
-		if (!(${dbSelectListDataEntry('List').replace(/,/g, ' || ')} )) {
-			return fail(400, {
-				data: { ${dbSelectListDataEntry('List').replace(/password./,'')} },
-				message: 'Insufficient data supplied'
-			})
-		}
-    await utils.sleep(2000);
-    const d = Object.fromEntries(
-			Object.entries(input_data).filter(([_, value]) => value).filter(Boolean)
-		);
     try {
       await db.${modelObjName_}.update({
         where: {
           id
         },
-        data: d,
+        data,
       });
+      await utils.sleep(2000);
       return {
         ${dbSelectListDataEntry('List').replace(/password,/,'')},
         success: "${modelObjCName_} updated successfully",
       };
-    } catch (err) {
-      return fail(500, { message: 'Internal error occurred' });
+    } catch (err: string | Error) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return fail(500, { message: 'Internal error occurredL ' + msg });
     }
   },
   // ------------------------------------------------
   delete: async ({ request }) => {
-  const input_data = Object.fromEntries(
-			await request.formData()
-		) as {
+  const data = Object.fromEntries(
+      await request.formData()
+    ) as {
       ${dbSelectListDataEntry('?formData')}
     }
 
-		const { ${dbSelectListDataEntry('List')} } = input_data
-		if (!(${dbSelectListDataEntry('List').replace(/,/g, ' || ')} )) {
-			return fail(400, {
-				data: { ${dbSelectListDataEntry('List').replace(/password./,'')} },
-				message: 'Insufficient data supplied'
-			})
-		}
-    await utils.sleep(2000);
-    const d = Object.fromEntries(
-			Object.entries(input_data).filter(([_, value]) => value).filter(Boolean)
-		);
+    if (idIsNumeric){
+        data.id = Number(data.id)
+    }
+    const { ${dbSelectListDataEntry('List')} } = data
+    if (!(${dbSelectListDataEntry('List').replace(/,/g, ' || ')} )) {
+      return fail(400, {
+        data: { ${dbSelectListDataEntry('List').replace(/password./,'')} },
+        message: 'Insufficient data supplied'
+      })
+    }
+
     try {
       await db.${modelObjName_}.delete({
         where: {
           id
         }
       });
+      await utils.sleep(2000);
       return {
         ${dbSelectListDataEntry('List').replace(/password,/,'')},
         success: "${modelObjCName_} deleted successfully",
       };
-    } catch (err) {
-      return fail(500, { message: 'Internal error occurred' });
+    } catch (err: string | Error) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return fail(500, { message: 'Internal error occurredL ' + msg });
     }
   }
 } satisfies Actions
@@ -414,10 +631,10 @@ function xPackageManager(pm: string): 'npx' | 'pnpx' | 'yarn dlx' | 'bunx' | 'un
   }
 }
 
-// Promise wrapper for child_process.exec
+// Promise wrapper for childProcess.exec
 function execShell(cmd: string): Promise<string> {
     return new Promise((resolve, reject) => {
-        child_process.exec(cmd, { cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath }, (err, stdout, stderr) => {
+        childProcess.exec(cmd, { cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath }, (err, stdout, stderr) => {
             if (err) {
                 reject(new Error(`Command failed: ${stderr}`));
                 return;
@@ -454,19 +671,20 @@ function noType(name: string){
 }
 let buttons = `<div class='buttons'>
       `;
-function buttons_(){
+function spinners_(){
   const spinner: boolean = embellishments_.includes('CRSpinner');
   ['create', 'update', 'delete', 'clear'].forEach((caption) => {
-    const faction = caption === 'clear' ? 'false': caption
+    // const faction = caption === 'clear' ? 'clear': caption
     const cap = caption[0].toUpperCase() + caption.slice(1);
-    const hid = cap !== 'Create';
+    const hid = cap === 'Clear' ? 'false': `dBtn${cap}`;
+    const spinOn = cap === 'Clear' ? 'false': `spin.${caption}`;
     if(spinner){
       buttons += `    <CRSpinner
             bind:button={btn${cap}}
-            spinOn={spin.${caption}}
+            spinOn={${spinOn}}
             caption=${caption}
-            formaction="?/${faction}"
-            hidden={dBtn${cap}}
+            formaction="?/${caption}"
+            hidden={${hid}}
           >
           </CRSpinner>
           `;
@@ -547,26 +765,26 @@ function submitFunc(){
   return;
 }
 
-/* 
-function toArray(fields_: string[]){
-  const fields:string[] = [];
-  fields_.forEach(str => {
-    fields.push(`"${str}"`);
-  })
-  return fields;
-}
-*/
 let variables = ``;
 let uiElements:any[] = [];
 let theInitValues: string[] = [];
+let uiSelectFields = ``;
 function initValues(){
+  let uiSelect = new Set<string>();
   let updateFields = ``;
   let partialType = `type ${modelObjCName_}Partial = {
     `;
   let clean_snap = '';
   const fields: string[] = [];
   fields_.forEach(fName => {
-    let [ , name, type] = fName.match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m); 
+    const m = (fName as string).match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m);
+    let name: string = '';
+    let type:string = '';
+    if (m){
+    name = m[1];
+    type = m[2];
+    }
+    // let [ , name, type] = (fName as string).match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m); 
     if ('int|Int'.includes(type)){
       type = 'number';
     }
@@ -576,7 +794,11 @@ function initValues(){
     `;
     variables += `let ${name}El: Types.TCRInput | null = null;
   `;
-    uiElements.push(`${name}El`)
+
+    uiElements.push(`${name}El`);
+    if (name !== 'password'){
+      uiSelect.add(name);
+    }
     if (!fields.includes('id:string')){
       fields.push(`
   id: null`);
@@ -639,33 +861,30 @@ function initValues(){
       }
     }
   });
-  clean_snap = clean_snap.replace(/,\s*$/,'')
+  clean_snap = clean_snap.replace(/,\s*$/,'');
   partialType = partialType.slice(0,-3) + `
 }`;
   updateFields = updateFields.replace(/u\.password/, "''").slice(0,-11);
-
+  uiSelectFields  = Array.from(uiSelect).join(',\n');
   theInitValues = [clean_snap, partialType, updateFields];
 }
 
-function nullType(fName:string){
-  let [ , name, type] = fName.match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m);
+
+// function nullType(fName:string){
+//  let [ , name, type] = fName.match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m);
   // fName includes type and we added | null
-  if (type.includes('[]')){
-    return fName + ' | []';
-  }else if(!'String|Number|Boolean|Date'.includes(type)){
-    return fName + ' | null';
-  }
-}
-function isIdNumeric(fields:string[]){
-  try{
-    return /id:\s*?(Int|Number)/i.test(fields.join(','));
-  }finally{}
-}
+//  if (type.includes('[]')){
+//    return fName + ' | []';
+//  }else if(!'String|Number|Boolean|Date'.includes(type)){
+//    return fName + ' | null';
+//  }
+//}
 
 let importTypes = 'import type {';
+
 function createFormPage(includeTypes: string, outputChannel: any){
   // outputChannel.appendLine('createFormPage entry point routesPath: '+ routesPath); outputChannel.show();
-  const routeNamePath = path.join(routesPath, routeName_)
+  const routeNamePath = path.join(routesPath, routeName_);
   if (!fs.existsSync(routeNamePath)) {
     // outputChannel.appendLine('create routeNamePath: '+ routeNamePath); outputChannel.show();
     fs.mkdirSync(routeNamePath, { recursive: true });
@@ -674,10 +893,18 @@ function createFormPage(includeTypes: string, outputChannel: any){
   let inputBoxes = '';
 
   fields_.forEach(fName=>{
-    let [ , name, type] = fName.match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m);
+    const m = (fName as string).match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m);
+    let name: string = '';
+    let type:string = '';
+    if (m){
+    name = m[1];
+    type = m[2];
+    }
+    
+    // let [ , name, type] = (fName as string).match(/(.+):\s*(\S+)/)?.map((m:string,index:number) => index===2 ? m.toLowerCase() : m);
 
     inputBoxes += inputBox(name, type);
-  })
+  });
   let imports= '';
   embellishments_.forEach(comp => {
     imports += `import ${comp} from '$lib/components/${comp}.svelte';
@@ -690,7 +917,7 @@ if (embellishments_.includes('CRActivity')){
   bind:result
   bind:selectedUserId
   user={data.locals?.user}
-  users={data.users}
+  users={data.users as Types.UserPartial[]}
 ></CRActivity>`;
 }
 
@@ -708,38 +935,51 @@ let plusPageSvelte = `
   import { page } from '$app/state'; // for page.status code on actions
   import * as utils from '$lib/utils';
   import * as Types from '$lib/types/types';
-  ` + imports +
+  ` 
+  + imports +
 
   `
-  // find if modelObjNames.id is numeric or string
-  const idIsNumeric = isIdNumeric(fields);
+
+  interface IStringBoolean { 
+    [key: string]: boolean
+  };
+
   type ARGS = {
     data: PageData;
     form: ActionData;
   };
   let { data, form }: ARGS = $props();
+  const idIsNumeric = ${idIsNumeric_};
   ${variables}
   let uiElements:Array<Types.TCRInput> = [${uiElements}];
   let nullSnap = {
     ${theInitValues[0]}
   } as Types.${modelObjCName_}Partial;
 
-  const crId_ = () => {
-    return idIsNumeric ? Number(snap.id) :  String(snap.id);
-  }
-  let snap = $state<Types.${modelObjCName_}Partial>(data.${modelObjName_}s?.[0] ?? nullSnap);
+  let snap = $state<Types.${modelObjCName_}Partial>(nullSnap);
   const snap_ = () => {
     return snap;
   };
 
+  
   const rowSelected = async (event: MouseEvent) => {
 		event.preventDefault();
 		const el = event.target as HTMLParagraphElement;
+    // render record list with leading record id
     let idx = el.innerText.split(':')[0];
 		let id = idIsNumeric ?  Number(idx):  String(idx);
-		snap = data.${modelObjName_}s?.filter((el) => el.id === id)[0] as Types.${modelObjCName_}Partial;
-	};
+    snap = data.${modelObjName_s}?.filter(
+			(el: Types.${modelObjCName_}Partial) => el.id === id
+		)[0] as Types.${modelObjCName_}Partial;
+    await utils.sleep(300);
+		if (uiElements[1]) {  // are the elements initialized already?
+			uiElements[0].setInputBoxValue(id);
+			uiElements[1].setFocus();
+			uiElements[0].setInputBoxValue(id);
+		}	
+  };
 
+  // needed for CRActivity
   let selectedUserId = $state(data.locals?.user.id) as string;
 
   let btnCreate: HTMLButtonElement;
@@ -757,7 +997,7 @@ let plusPageSvelte = `
   // for Create new record full formValid with no id must be true
   let formDataValid = $derived.by(() => {
     const status = [true, false];
-    if (utils.same<Types.CategoryPartial>(snap_(), nullSnap)) return [false, false];
+    if (utils.same<Types.${modelObjName_s}Partial>(snap_(), nullSnap)) return [false, false];
     for (const [key, value] of Object.entries(snap_())) {
       if ('id|updatedAt'.includes(key)) continue;
       if (value) {
@@ -772,46 +1012,51 @@ let plusPageSvelte = `
   let dBtnCreate = $state(true);
   let dBtnUpdate = $state(true);
   let dBtnDelete = $state(true);
-  let idOK = $derived(
-    crId_() !== null && 
-    idIsNumeric ? (crId_() as number) > 0 : (crId_() as string).length === 36
-  );
+
+  let idOK = $derived(snap.id !== null);
   $effect(() => {
 		dBtnCreate = idOK || !formDataValid[0];
 		dBtnUpdate = !idOK || !formDataValid[1];
-		dBtnDelete = !idOK || spin.delete;
-		const id = (idEl as Types.TCRInput)?.getInputBoxValue();
-		if (id) {
-			const sn = data.${modelObjName_}s?.filter((el) => el.id === id)[0] as Types.CategoryPartial;
-			if (sn.name !== snap.name) {
-				snap.name = sn.name;
-			}
-		}
+		dBtnDelete = !idOK;
+		if (uiElements[0] === document.activeElement) {
+      uiElements[0].required = dBtnCreate;
+      const id = (uiElements[0] as Types.TCRInput)?.getInputBoxValue()
+      if (id) {
+        const sn = data.${modelObjName_s}?.filter(
+          (el) => el.id === id
+        )[0] as Types.${modelObjCName_}Partial
+        if (sn.name !== snap.name) {
+          snap.name = sn.name
+        }
+      }
+    }
 	});
 
   const clearForm = (event?: MouseEvent | KeyboardEvent) => {
     event?.preventDefault();
     snap = nullSnap;
-    utils.hideButtonsExceptFirst([btnClear, btnCreate, btnUpdate, btnDelete]);
   };
   
-  interface ISpinner {
-		[key: string]: boolean;
-	}
-	let spin: ISpinner = $state({ create: false, update: false, delete: false });
+
+	let spin: IStringBoolean = $state({ 
+    create: false, 
+    update: false, 
+    delete: false,
+    clear: false    // TODO not need?
+  });
 
   const enhanceSubmit: SubmitFunction = async ({ action, formData, cancel }) => {
+    spin[action.search.slice(2)] = true // start spinner animation  
     if (action.search === '?/clear') {
 			snap = nullSnap;
 			cancel();
-			// return false;
+			return false;
 		}
     const required:string[] = [];
     for (const [key, value] of Object.entries(snap)) {
       formData.set(key, value as string);
       if(!value){
         const req = key +' is required';
-        // TODO check if querySelector is valid
         const el = document.querySelector('[title="' + key +'"]')
         if (el){
           (el as HTMLInputElement).placeholder += req;
@@ -823,8 +1068,6 @@ let plusPageSvelte = `
     if (required.join('').length){
       return;
     }
-
-    spin[action.search.slice(2)] = true; // start spinner animation
       
     result =
       action.search === '?/create'
@@ -832,9 +1075,6 @@ let plusPageSvelte = `
       : action.search === '?/update'
       ? "updating ${modelObjName_}..."
       : "deleting ${modelObjName_}..."
-    // if (action.search === '?/delete') {
-    //   utils.hideButtonsExceptFirst([btnDelete, btnCreate, btnUpdate]);
-    // }
       
     return async ({ update }) => {
       await update();
@@ -848,9 +1088,8 @@ let plusPageSvelte = `
         // iconDelete.classList.toggle('hidden');
         // utils.hideButtonsExceptFirst([btnCreate, btnUpdate, btnDelete]);
       }
-      invalidateAll();
-      await utils.sleep(1000);
       spin[action.search.slice(2)] = false; // stop spinner animation
+      invalidateAll();
       clearForm();
       utils.hideButtonsExceptFirst([btnClear, btnCreate, btnUpdate, btnDelete]);
       clearMessage();
@@ -858,21 +1097,17 @@ let plusPageSvelte = `
   };
   // let owner = true;
   const color = 'blue';   // spinner color
-	onMount(() => {
-		let ms = 0;
-		uiElements.forEach((el) => {
-			setTimeout(() => {
-				// @ts-expect-error no focus on CRInput
-				(el as TCRInput).setFocus(); // TODO get variable names
-				ms += 100;
-			}, ms);
-		});;
+  // const handleWindowLoad = () => {
+  //   console.log('page fully loaded');
+  // }
+  onMount( () => {
+		if (uiElements[1]) {
+			uiElements[1].setFocus();
+			uiElements[0].setFocus();
+		}
 	});
-  const handleWindowLoad = () => {
-    console.log('page fully loaded');
-  }
 </script>
-<svelte:window onload={handleWindowLoad} />
+<!-- <svelte:window onload={handleWindowLoad} /> -->
 <svelte:head>
   <title>${modelObjCName_} Page</title>
 </svelte:head>
@@ -893,14 +1128,14 @@ ${cr_Activity}
 
   <div class='right-column' onclick={rowSelected} aria-hidden={true}>
     <!-- argument true to return an array not a string -->
-    {#each data.${modelObjName_}s as r (r.id)}
+    {#each data.${modelObjName_s} as r (r.id)}
       <div class='grid-row'>
         <p>{r.id}: {r.name}</p>
       </div>
     {/each}
-  </div> <!-- right-column -->
+  </div>
 
-</div>	<!-- two-column-grid -->
+</div>
 
 <style lang="scss">
 	.form-wrapper {
@@ -918,9 +1153,6 @@ ${cr_Activity}
 			gap: 0.3rem;
 			justify-content: flex-end;
 			align-items: center;
-			button {
-				display: inline-block;
-			}
 		}
 	}
 	.two-column-grid {
@@ -949,10 +1181,9 @@ ${cr_Activity}
 			margin: 0;
 			outline: none;
 			border: none;
-			width: 13rem;
+			width: 100%;  // TODO how to make it wider as parent?
 			height: 1rem !important;
 			p {
-				// padding: 3px 1.2rem;
 				margin: 0;
 				width: 100%;
 				padding: 5px 0;
@@ -975,7 +1206,7 @@ import type { SubmitFunction } from '@sveltejs/kit';
 import { enhance } from '$app/forms';
 import { invalidateAll } from '$app/navigation';
 import { page } from '$app/state'; // for page.status code on actions
-
+import bcrypt from 'bcrypt';
 import * as utils from '$lib/utils';
 import * as Types from '$lib/types/types';
 ` + imports +
@@ -987,6 +1218,7 @@ type ARGS = {
 };
 let { data, form }: ARGS = $props();
 // theInitValues[1]
+const idIsNumeric = ${idIsNumeric_};
 let nullSnap = {
   ${theInitValues[0]}
 } as ${modelObjCName_}Partial;
@@ -1140,7 +1372,7 @@ ${cr_Activity}
   </div>
   <div class="right-column" onclick={rowSelected} aria-hidden={true}>
 		<!-- argument true to return an array not a string -->
-		{#each data.${modelObjName_}s as r (r.id)}
+		{#each data.${modelObjName_s} as r (r.id)}
 			<div class="grid-row">
 				<p>{r.id}: {r.name}</p>
 			</div>
@@ -1216,6 +1448,7 @@ ${cr_Activity}
   }
 </style>
 `;
+
 const pageSveltePath = path.join(routeNamePath, '/+page.svelte');
   if (modelObjCName_ === 'User'){
     fs.writeFileSync(pageSveltePath, plusUserSvelte, 'utf8');
@@ -1223,51 +1456,6 @@ const pageSveltePath = path.join(routeNamePath, '/+page.svelte');
     fs.writeFileSync(pageSveltePath, plusPageSvelte, 'utf8');
   }
 }
-// function createUtils(routeName:String, fields:string[]) {
-  
-//   const utils = `export const sleep = async (ms: number) => {
-  //     return new Promise((resolve) => {
-    //       setTimeout(() => {
-      //         // ms here is a dummy but required by
-      //         // resolve to send out some value
-//         resolve(ms)
-//       }, ms)
-//     })
-//   }
-  
-//   export const resetButtons = (buttons: HTMLButtonElement[]) => {
-//     try {
-//       buttons.forEach((btn) => {
-//         btn.classList.remove('hidden')
-//         btn.classList.add('hidden')
-//         try {
-//           btn.hidden = true
-//         } finally {
-//         }
-//       })
-//     } catch { }
-//   }
-// `;
-
-//   const utilsPath = path.join(rootPath as string, '/src/lib/utils');
-//   if (!fs.existsSync(utilsPath)) {
-//     fs.mkdirSync(utilsPath, { recursive: true });
-//   }
-//   let filePath = path.join(utilsPath, 'crHelpers.ts')
-//   fs.writeFileSync(filePath, utils, 'utf8');
-
-//   const content = "export * from '/home/mili/TEST/cr-crud-extension/src/lib/utils/crHelpers';";
-//   filePath = path.join(utilsPath, 'index.ts');
-//   if (!fs.existsSync(filePath)){
-//     fs.writeFileSync(filePath, content, 'utf8');
-//   } else {
-//     // check if crHelpers are exported from /utils/index.ts
-//     const exports = fs.readFileSync(filePath, 'utf8');
-//     if (!exports.includes('crHelpers')){
-//       fs.appendFileSync(filePath, content, 'utf8');
-//     }
-//   }
-// }
 
 function createCRInput(){
   const componentsPath = ensureComponentPath();
@@ -1331,6 +1519,9 @@ function createCRInput(){
 		clearOnInputIsReady = false
 	}: PROPS = $props();
 
+  const labelUp = 'opacity:1;top:3px;z-index:10;';
+	const labelDown = 'opacity:0.5;top:25px;z-index:10;';
+
 	export const capitalizes = (str) => {
 		const spaceUpper = (su) => {
 			// getting _string so return ' String' with a leading space
@@ -1345,7 +1536,6 @@ function createCRInput(){
 		);
 	};
 
-	// @ts-expect-error
 	String.prototype.capitalizes = function () {
 		return capitalizes(this);
 	};
@@ -1380,7 +1570,7 @@ function createCRInput(){
 
 	const onFocusHandler = (event: FocusEvent) => {
 		event.preventDefault();
-		labelStyle = 'opacity:1;top:3px;z-index:10;';
+		labelStyle = labelUp;;
 	};
 
 	const onBlurHandler = (event: FocusEvent) => {
@@ -1391,12 +1581,15 @@ function createCRInput(){
 			// input is required so warn the user with pink placeholder required message
 			if (required) {
 				inputEl.placeholder = requiredStr;
-				labelStyle = 'opacity:1; top:3px;z-index:10;';
+				labelStyle = labelUp;
 				utils.setPlaceholderColor('pink');
 			} else {
 				// input is not required so lower down field label inside the input box
-				labelStyle = 'opacity:0.5;top:25px;z-index:10;';
+				labelStyle = labelDown;
 			}
+		}
+    if (capitalize) {
+			value = utils.capitalize(value as string);
 		}
 		if (exportValueOn.includes('blur')) {
 			if (onInputIsReadyCallback) {
@@ -1406,30 +1599,18 @@ function createCRInput(){
 	};
 	const onKeyUpHandler = (event: KeyboardEvent) => {
 		event.preventDefault();
+    labelStyle = labelUp;
 		if (event.key === 'Tab') return;
-		if (capitalize && value) {
-			// NOTE: reactive variable inputbox value does not updates
-			// inputbox value when changed via script, so inputEl.value
-			// as a workaround is updated instead
-			inputEl.value = utils.capitalize(value as string) as string;
-		}
 		// if keypress is Enter and exportValueOn does not include Enter we return
 		if (exportValueOn.includes('enter') && event.key !== 'Enter') {
-			if (capitalize && value) {
-				value = utils.capitalize(value as string);
-			}
 			return;
 		}
 		// already prevented blur|keypress and blur|enter
 		// blur always follows if any case
 		if (!'keypress|blur|enter|blur'.includes(exportValueOn) && value) {
-			value = capitalizes(value);
 			return;
 		}
 		if (value && (value as string).length > 0) {
-			if (capitalize) {
-				value = capitalizes(value);
-			}
 
 			// if input should be returned
 			// (blur is handled in a separate onBlurHandler)
@@ -1438,6 +1619,7 @@ function createCRInput(){
 				(exportValueOn.includes('enter') && event.key === 'Enter')
 			) {
 				if (onInputIsReadyCallback) {
+          value = capitalizes(value);
 					onInputIsReadyCallback();
 					if (clearOnInputIsReady) {
 						value = '';
@@ -1451,12 +1633,9 @@ function createCRInput(){
 	// move it up on focus, but the text does not set focus on input
 	// element on click -- so we have to set the focus when the label
 	// text is selected
-	let labelStyle = $state('opacity:0.5;top:25px;z-index:10;');
+	let labelStyle = $state(labelDown);
 	let label: HTMLLabelElement;
 	let inputEl: HTMLInputElement | HTMLTextAreaElement;
-	export const setFocus = () => {
-		inputEl.focus();
-	};
 
 	export const getInputBoxValue = () => {
 		return typeof value === 'number' ? Number(inputEl.value) : String(inputEl.value);
@@ -1471,22 +1650,21 @@ function createCRInput(){
 		inputEl.focus();
 		value = str;
 	};
+
+  export const setFocus = () => {
+		labelStyle = value && required ? labelUp : labelDown;
+	};
+
 	$effect(() => {
 		if (required) {
-			inputEl.setAttribute('required', 'true');
-		} else {
-			inputEl.removeAttribute('required');
+      inputEl.removeAttribute('required');
+    } else {
+      inputEl.setAttribute('required', 'true');
 		}
 	});
 	onMount(() => {
 		label = document.getElementsByTagName('label')[0] as HTMLLabelElement;
-		setTimeout(() => {
-			if (value && inputEl) {
-				setFocus();
-			}
-		}, 300);
 		if (required) {
-			inputEl.setAttribute('required', 'true');
 			inputEl.setAttribute('required', 'true');
 		} else {
 			inputEl.removeAttribute('required');
@@ -1741,13 +1919,15 @@ function createCRSpinner(){
   }
 </style>
 `;
-const crSpinnerPath = path.join(componentsPath, 'CRSpinner.svelte')
+  const crSpinnerPath = path.join(componentsPath, 'CRSpinner.svelte')
   fs.writeFileSync(crSpinnerPath, crSpinner, 'utf8');
 }
 
 function createCRActivity(){
-  const componentsPath = ensureComponentPath()
-  if (!componentsPath) return
+  const componentsPath = ensureComponentPath();
+  if (!componentsPath) {
+    return;
+  }
   const crActivity = `<script lang="ts">
 	// CRActivity
   import { onMount } from 'svelte';
@@ -1881,12 +2061,12 @@ function createCRActivity(){
 </style>
 `;
 
-const crActivityPath = path.join(componentsPath, 'CRActivity.svelte')
+  const crActivityPath = path.join(componentsPath, 'CRActivity.svelte');
   fs.writeFileSync(crActivityPath, crActivity, 'utf8');
 }
 
 function createCRTooltip(){
-  const componentsPath = ensureComponentPath()
+  const componentsPath = ensureComponentPath();
   if (!componentsPath) {
     return;
   }
@@ -2329,9 +2509,10 @@ CRTooltip could accept the following props, though all are optional
 </style>
 `;
 
-const crTooltipPath = path.join(componentsPath, 'CRTooltip.svelte')
+  const crTooltipPath = path.join(componentsPath, 'CRTooltip.svelte');
   fs.writeFileSync(crTooltipPath, crTooltip, 'utf8');
 }
+
 function createSummaryDetail(){
   const componentsPath = ensureComponentPath()
   if (!componentsPath) {
@@ -2406,7 +2587,7 @@ function createSummaryDetail(){
   }
 </style>
 `;
-const crSummaryDetailPath = path.join(componentsPath, 'CRSummaryDetail.svelte')
+  const crSummaryDetailPath = path.join(componentsPath, 'CRSummaryDetail.svelte');
   fs.writeFileSync(crSummaryDetailPath, crSummaryDetail, 'utf8');
 }
 
@@ -2686,11 +2867,11 @@ export async function activate(context: vscode.ExtensionContext) {
     }
     // vscode.window.showInformationMessage('EXT: rootPath == '+ rootPath),
     // const nonce = getNonce();
-    panel.webview.html = getWebviewContent(panel.webview, context.extensionUri, noPrismaSchema, installPartTwoPending);
+    panel.webview.html = getWebviewContent(panel.webview, context.extensionUri, noPrismaSchema, installPartTwoPending, sortArrByOrdered);
 
     panel.webview.onDidReceiveMessage(async (msg) => {
       if (msg.command === 'installPrisma'){
-        // vscode.window.showInformationMessage('Webview asked to install Prisma');
+        outputChannel.appendLine('installPrisma'); outputChannel.show();
         const pm = detectPackageManager();
         if (typeof pm === 'object'){
           vscode.window.showInformationMessage('detectPackageManager err:'+ pm.err);
@@ -2702,18 +2883,18 @@ export async function activate(context: vscode.ExtensionContext) {
         sendToTerminal(`${pm} install bcrypt @types/bcrypt; ${pm} install typescript ts-node @types/node globals -D; ${pm} i -D prisma @prisma/client; ${ex} prisma init`);
         const prismaPath = path.join(rootPath, '/prisma/schema.prisma')
         for (let i=0; i < 30; i++){
-          await sleep(2000)
+          await sleep(1000)
           if (fs.existsSync(prismaPath)){
             break;
           }
         }
-        await sleep(2000);  // to be sure it is completed
+        await sleep(1000);  // to be sure it is completed
         createPendingFile();
         
         panel.webview.postMessage({
           command: "installPartOneDone"
         });
-        await sleep(2000);
+        await sleep(1000);
         // panel.dispose()
 
         // read created /prisma/schema.prisma and display it in a new Tab
@@ -2750,23 +2931,6 @@ export async function activate(context: vscode.ExtensionContext) {
                 preview: false // Optional: Force a new tab (not preview mode)
             });
 
-            // This does not work
-            // // Save progress
-            // context.workspaceState.update('installStep', 'installPartOneDone');
-
-            // // Retrieve when focusing again
-            // const step = context.workspaceState.get('installStep');
-            // panel.webview.postMessage({ step });
-
-            // panel.onDidChangeViewState(e => {
-            //   // Retrieve when focusing again
-            //   if (e.webviewPanel.active) {
-            //     panel.webview.postMessage({ command: 'installPartOneDone' });
-            //   }else{
-            //     const step = context.workspaceState.get('installStep');
-            //     panel.webview.postMessage({ command: 'installPartOneDone' });
-            //   }
-            // });
         } catch (error) {
             // Handle errors (e.g., file not found)
             console.error('Failed to open file:', error);
@@ -2783,7 +2947,7 @@ export async function activate(context: vscode.ExtensionContext) {
         // vscode.window.showInformationMessage('Webview asked to install prisma part two');
         sendToTerminal(`${ex} prisma migrate dev --name init; ${ex} prisma generate`);
         await sleep(10000);
-        // child_process.exec(command, (error, stdout, stderr) => {
+        // childProcess.exec(command, (error, stdout, stderr) => {
         //   if(error){
         //     vscode.window.showInformationMessage('Installing PrismaPartTwo failed '+ error);
         //     return
@@ -2795,16 +2959,16 @@ export async function activate(context: vscode.ExtensionContext) {
         });
       }
       else if(msg.command==='readSchema'){
-
+        outputChannel.appendLine('HTML call to read schema '); outputChannel.show();
         try {
 
           const prismaSchemaPath = path.join(rootPath as string, "prisma", "schema.prisma");
           const schemaContent = fs.readFileSync(prismaSchemaPath, "utf-8");
-
+          
           const parsedSchema = parsePrismaSchema(schemaContent);
           try{
             if(modelsFieldNames){
-              outputChannel.appendLine('modelsFieldNames found'); outputChannel.show();
+              // outputChannel.appendLine('modelsFieldNames found'); outputChannel.show();
               // outputChannel.appendLine('strModelNames:' + strModelNames); outputChannel.show();
 
               // outputChannel.appendLine(JSON.stringify(modelsFieldNames,null,2)); outputChannel.show();
@@ -2822,7 +2986,8 @@ export async function activate(context: vscode.ExtensionContext) {
             command: "renderSchema",
             payload: parsedSchema,
             rootPath: rootPath,
-            modelsFieldNames
+            modelsFieldNames,
+            sortArrByOrdered
           });
           // vscode.window.showErrorMessage('This is a test vscode.window.showErrorMessage');
         } catch (error) {
@@ -2832,15 +2997,16 @@ export async function activate(context: vscode.ExtensionContext) {
         }
       }
       else if (msg.command === 'createCrudSupport') {
+        outputChannel.appendLine('HTML call createCrudSupport'); outputChannel.show();
         const {routeName, modelObjName, fields, embellishments } = msg.payload as {
           routeName: string;
           modelObjName: string;
           fields: string[];
           embellishments:string[];
         };
-        outputChannel.appendLine('routeName: '+ routeName + ' - modelObjName: '+ modelObjName); outputChannel.show();
+        idIsNumeric_ = /id:\s*?(Int|Number)/i.test(fields.join(','));
         const pageSveltePath = path.join(routesPath, routeName, '/+page.svelte');
-        // outputChannel.appendLine(pageSveltePath); outputChannel.show();
+        outputChannel.appendLine('createCrudSupport entry point should we overwrite?'); outputChannel.show();
         if (fs.existsSync(pageSveltePath)){
           const answer = await vscode.window.showWarningMessage(
             `There is a route ${routeName}. To overwrite it?`,
@@ -2857,8 +3023,10 @@ export async function activate(context: vscode.ExtensionContext) {
         };
         routeName_ = routeName;
         modelObjName_ = modelObjName.toLowerCase();
+        modelObjName_s = modelObjName_.trim().replace(/(.)$/, (c) => c === 'y' ? 'ies' : c+'s');
         modelObjCName_ = modelObjName;  //[0].toUpperCase() + modelObjName.slice(1);
         fields_= fields.join().replace(/Int|int/g, 'number').replace(/:\s*?(\w+)/g, match => match.toLowerCase()).split(',');
+        outputChannel.appendLine(JSON.stringify(fields_,null,2));outputChannel.show();
         embellishments_ = embellishments;
         // createUtils(routeName, fields);
         const funcList: FuncList = {
@@ -2876,8 +3044,8 @@ export async function activate(context: vscode.ExtensionContext) {
             funcList[fun]() // call the function reference
           }finally{}
         }
+        spinners_();
         createFormPage(includeTypes, outputChannel);
-        buttons_();
 
         // create accompanying +page.server.ts file
         const pageServerPath = path.join(routesPath, routeName_, '/+page.server.ts');
@@ -2887,27 +3055,18 @@ export async function activate(context: vscode.ExtensionContext) {
         fs.writeFileSync(hooksPath, getHooksPage(), 'utf8');
 
         const exportDbPath = path.join(rootPath, '/src/lib/server/db.ts');
-        fs.writeFileSync(exportDbPath, `
-  import { PrismaClient } from '@prisma/client';
-  // export const db = new PrismaClient();
-  export const db = new PrismaClient({
-    log: ['warn', 'error']
-  });
-  // log: ['query', 'info', 'warn', 'error']
-  `
-        );
+        fs.writeFileSync(exportDbPath, getPrismaClient());
         panel.webview.postMessage({
           command: "createCrudSupportDone"
         });
-        outputChannel.appendLine(`[WebView] createCrudSupport DONE`);
-        outputChannel.show(true);
+        // outputChannel.appendLine(`[WebView] createCrudSupport DONE`);outputChannel.show(true);
 
         panel.webview.postMessage({
-            command: "enableRemoveHint",
-          });
+          command: "enableRemoveHint",
+        });
       }
       else if(msg.command === 'saveTypes'){
-
+        outputChannel.appendLine('HTML call '); outputChannel.show();
         const dbPath =  path.join(rootPath as string, '/src/lib/server/');
         if (!fs.existsSync(dbPath)) {
           fs.mkdirSync(dbPath, { recursive: true });
@@ -2938,105 +3097,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const helpersPage = path.join(utilsPath as string, '/helpers.ts');
   if (!fs.existsSync(helpersPage)){
-    fs.writeFileSync(helpersPage, `// helpers.ts
-import { browser } from '$app/environment';
-export const sleep = async (ms: number) => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      // ms here is a dummy but required by
-      // resolve to send out some value
-      resolve(ms)
-    }, ms)
-  })
-}
-
-export const resetButtons = (buttons: HTMLButtonElement[]) => {
-  try {
-    buttons.forEach((btn) => {
-      btn.classList.remove('hidden')
-      btn.classList.add('hidden')
-      try {
-        btn.hidden = true
-      } finally {
-      }
-    })
-  } catch { }
-}
-
-export const hideButtonsExceptFirst = (buttons: HTMLButtonElement[]) => {
-  resetButtons(buttons);
-  if (buttons[0] && buttons[0].classList.contains('hidden')) {
-    buttons[0].classList.toggle('hidden')
-    buttons[0].hidden = false
+    fs.writeFileSync(helpersPage, getHelpersPage());
   }
-}
-
-export const getCSSValue = (varName: string): string | undefined => {
-  if (!browser) return;
-  try {
-    const root = document.documentElement;
-    const value = getComputedStyle(root).getPropertyValue(varName).trim();
-    return value || undefined;
-  } catch (err) {
-    console.log('getCSSValue error:', (err as Error).message);
-  }
-};
-
-export const setCSSValue = (varName: string, value: string) => {
-  try {
-    if (browser) {
-      const root = document.querySelector(':root') as Node
-      if (root) {
-        root.style.setProperty(varName, value)
-      }
-    }
-  } catch (err: any) {
-    console.log('setCSSValue', err)
-  }
-}
-
-export const setTextColor = (varName: string, color: string) => {
-  try {
-    if (browser) {
-      const root = document.querySelector(':root')
-      if (root) {
-        root.style.setProperty(varName, color)
-      }
-    }
-  } catch (err) {
-    console.log('setTextColor', err)
-  }
-}
-
-Number.prototype[Symbol.iterator] = function* () {
-  for (let i = 0; i < this; i++) {
-    yield i
-  }
-}
-
-export const setPlaceholderColor = (color: string) => {
-  if (browser) {
-    document.documentElement.style.setProperty('--PLACEHOLDER-COLOR', color)
-    setTextColor('--MESSAGE-COLOR', color === 'red' ? 'pink' : color)
-  }
-}
-
-export const capitalize = (str: string) => {
-  const spaceUpper = (su: string) => {
-    // getting _string so return ' John' with a leading space
-    return \` \${su[1]?.toUpperCase()}\`
-  }
-  let s = str[0]?.toUpperCase() + str.slice(1)
-  return s
-    .replace(/\b[a-z](?=[a-z]{2})/g, (char) => char.toUpperCase())
-    // snake_string_format replace _ with space
-    .replace(/(_\w)/, spaceUpper)
-}
-
-String.prototype.capitalize = function () {
-  return capitalize(this as string)
-}
-`)}
 
   const indexPage = path.join(utilsPath, '/index.ts');
   if (!fs.existsSync(indexPage)){
@@ -3044,30 +3106,36 @@ String.prototype.capitalize = function () {
     export * from './helpers'
 `
   )}
-        // END /src/lib/utils index.ts and helpers.ts
-        const appTypesPath = path.join(rootPath as string, '/src/lib/types/');
-        if (!fs.existsSync(appTypesPath)) {
-          fs.mkdirSync(appTypesPath, { recursive: true });
-        }
-        // includeTypes = msg.includeTypes;
-        // vscode.window.showInformationMessage(includeTypes)
-        let types = `
+
+  
+  // END /src/lib/utils index.ts and helpers.ts
+  const appTypesPath = path.join(rootPath as string, '/src/lib/types/');
+  if (!fs.existsSync(appTypesPath)) {
+    fs.mkdirSync(appTypesPath, { recursive: true });
+  }
+  let lowerCaseTypes  = msg.payload.types
+      .replace(/(String|Number|Boolean)/gm, (s: string) => s.toLowerCase())
+      .replace(/DateTime/gm, 'Date')
+      .replace(/\bInt\b/gi, 'number').replace(/\?/g, '');
+  // outputChannel.appendLine(lowerCaseTypes); outputChannel.show();
+  // outputChannel.appendLine(msg.payload.includeTypes); outputChannel.show();
+    // includeTypes = msg.includeTypes;
+    // vscode.window.showInformationMessage(includeTypes)
+    let types = `
   // CRAppTypes from schema.prisma
   export type Role = 'USER' | 'ADMIN' | 'VISITOR' | 'MODERATOR';
-  ${msg.payload.replace(/DateTime/g, 'Date').replace(/\bInt\b/g, 'Number').replace(/\?/g, '')}
-
+  ${lowerCaseTypes}
+  // Copy this import to CRUD +page.svelte files
+  // ${msg.payload.includeTypes}
 `;
         // outputChannel.appendLine(getPartialTypes(types)); outputChannel.show();
-        types += getPartialTypes(types);
-        const appTypeFilePath = path.join(appTypesPath, 'types.ts')
-        // if (fs.existsSync(appTypeFilePath)) {
-        //   let content = fs.readFileSync(appTypeFilePath, 'utf-8');
-        //   if (!content.includes('// CRAppTypes')){
-        //     fs.appendFileSync(appTypeFilePath, types, 'utf8');
-        //   }
-        // }else{
-          fs.writeFileSync(appTypeFilePath, types, 'utf8');
-        // }
+        let partialTypes = getPartialTypes(lowerCaseTypes);
+        createSelectBlocks(partialTypes);
+        outputChannel.appendLine(partialTypes); outputChannel.show();
+        types += partialTypes;
+        const appTypeFilePath = path.join(appTypesPath, 'types.ts');
+        fs.writeFileSync(appTypeFilePath, types, 'utf8');
+
       }
       else if(msg.command === 'log'){
         // vscode.window.showInformationMessage(`Bane command log ${msg.text}`);
@@ -3090,7 +3158,9 @@ function getWebviewContent(
   webview: vscode.Webview, 
   extensionUri: vscode.Uri, 
   noPrismaSchema:boolean, 
-  installPartTwoPending:boolean): string {
+  installPartTwoPending:boolean,
+  sortArrByOrdered: any
+): string {
 
   // Enable scripts in the webview
   webview.options = {
@@ -3513,6 +3583,7 @@ created in the route specified in the Route Name input box.
   let tablesModel = 'waiting for schemaModels '
   let rootPath = ''
   const vscode = acquireVsCodeApi()
+  const sortArr ='';
   const noPrismaSchemaL = ${noPrismaSchema} ? true : false;
   const installPartTwoPending = ${installPartTwoPending} ? true : false;
 
@@ -3628,6 +3699,7 @@ created in the route specified in the Route Name input box.
       fieldsListEl.innerHTML = '';
     },0)
   }
+
   function attachPartTwoButtons() {
     installPartTwoBtnEl.removeEventListener('click')
     installPartTwoBtnEl.addEventListener('click', () => {
@@ -3637,6 +3709,7 @@ created in the route specified in the Route Name input box.
         vscode.postMessage({ command: 'cancel' })
       })
   }
+
   let installPartOneDone = false;
   // Re-run binding when visible:
   window.addEventListener('visibilitychange', () => {
@@ -3667,8 +3740,9 @@ created in the route specified in the Route Name input box.
       // Request schema from the active extension
       vscode.postMessage({ command: 'readSchema' })
     }
+
     if (msg.command === 'createCrudSupportDone') {
-    // vscode.postMessage({ command: 'log', text: 'EXT: createCrudSupportDone confirmed' })
+      // vscode.postMessage({ command: 'log', text: 'EXT: createCrudSupportDone confirmed' })
       fieldsListEl.innerHTML = ''
       routeNameEl.value = ''
       crudSupportDoneEl.classList.remove('hidden')
@@ -3677,15 +3751,19 @@ created in the route specified in the Route Name input box.
       }, 3000)
       closeSchemaModels();
     }
+
     if (msg.command === 'renderSchema') {
       // vscode.postMessage({command: 'log',  text: 'EXT: renderSchema' });
-      renderParsedSchema(msg.payload)
-      rootPath = msg.rootPath,
-      fieldModels= msg.modelsFieldNames
+      renderParsedSchema(msg.payload);
+      rootPath = msg.rootPath;
+      fieldModels= msg.modelsFieldNames;
+      sortArr = msg.sortArrByOrdered;
     }
+
     if(msg.command === 'taskError'){
       vscode.postMessage({command: 'log',  text: 'EXT: Prisma installation err '+ msg.error});
     }
+
     if(msg.command === 'enableRemoveHint'){
       noRemoveHint = false
     }
@@ -3700,6 +3778,7 @@ created in the route specified in the Route Name input box.
       renderField(fieldName)
     }
   }
+
   // to send to an input box the Enter key up we need an event to dispatch
   const enterKeyEvent = new KeyboardEvent('keyup', {
     key: 'Enter',
@@ -3717,7 +3796,6 @@ created in the route specified in the Route Name input box.
   }
   
   function changeLabelText(color, text, duration){
-
     // Update the first (and likely only) text node
     const nodeText = routeLabelNode.textContent;
     // vscode.postMessage({command:'log', text: 'found textNode '+ nodeText})
@@ -3728,13 +3806,13 @@ created in the route specified in the Route Name input box.
       labelEl.style.color = '';
     }, duration)
   }
+
   function clearLabelText(){
     clearTimeout(timer);
     // msgEl.innerHTML += '<br/>clearLabelText';
 
-      labelEl.style.color = '';
-      routeLabelNode.textContent = 'Route Name';
-
+    labelEl.style.color = '';
+    routeLabelNode.textContent = 'Route Name';
   }
 
   // a parsed schema from a Prisma ORM is sent back from the extension
@@ -3760,25 +3838,6 @@ created in the route specified in the Route Name input box.
     //     fieldNameEl.value = savedEntry
     //   }
     // }
-
-    const ordered = [
-      'id', 'authorId', 'userId', 'employeeId', 'customerId', 'ownerId',
-      'firstName', 'lastName', 'middleName', 'name', 'email',
-      'password', 'role', 'updatedAt'
-    ];
-    function sortArrByOrdered(arr, ordered){
-      const orderedPart = ordered
-        .map(key => arr.find(item => item.startsWith(key +':')))
-        .filter(Boolean);
-      
-      const leftoverPart = arr.filter(item => {
-        const key = item.split(':')[0].trim();
-        return !ordered.includes(key);
-      })
-      // const ord = orderedPart.join().replace(/Int|int/g, 'number').replace(/:\s*?(\w+)/g, match => match.toLowerCase()).split(',');
-      // const lop = leftoverPart.join().replace(/Int|int/g, 'number').replace(/:\s*?(\w+)/g, match => match.toLowerCase()).split(',');
-      return [...orderedPart, ...leftoverPart]
-    }
 
     let markup = ''
     let types = ''
@@ -3821,7 +3880,7 @@ created in the route specified in the Route Name input box.
       }
       includeTypes = includeTypes.slice(0, -2) + \` }  from '\$lib/types/types';
   \`
-      vscode.postMessage({ command: 'saveTypes', payload: types, includeTypes })
+      vscode.postMessage({ command: 'saveTypes', payload: {types, includeTypes} })
     } catch (err) {
       vscode.postMessage({command: 'log',  text: 'renderParsedSchema: ' + err });
     }
@@ -3849,8 +3908,11 @@ created in the route specified in the Route Name input box.
           msgEl.innerHTML += '<br/>SUMMARY fieldModels found: '+ JSON.stringify(fieldModels) + ' modelObjName: '+ modelObjName;
           
           try{
-            msgEl.innerHTML += '<br/>before theFields = fieldModels.User'
-            theFields = sortArrByOrdered(Array.from(fieldModels[modelObjName]), ordered);
+            msgEl.innerHTML += '<br/>before theFields = fieldModels.'+ modelObjName;
+
+            // msgEl.innerHTML += '<br/>'+ sortArr;
+            // theFields = sortArr(Array.from(fieldModels[modelObjName]), ordered);
+            theFields = Array.from(fieldModels[modelObjName]);
             // msgEl.innerHTML += '<pre>theFields: '+ theFields +'</pre>';
             if (theFields){
               // msgEl.innerHTML += '<br/>fieldModels[modelObjName] found for modelObjName: '+modelObjName;
@@ -3981,7 +4043,7 @@ created in the route specified in the Route Name input box.
       scroll(fieldsListEl)
     })
   }
-// we do not clear all the entries and rebuild from the fields
+  // we do not clear all the entries and rebuild from the fields
   // but just add a newly entered in the Field Name fieldNameId
   function renderField(fieldName) {
 
@@ -4056,7 +4118,6 @@ created in the route specified in the Route Name input box.
   createBtnEl.addEventListener('click', (event) => {
     noRemoveHint = true
     if (routeName && fields.length) {
-      // user has chance to change route name 
       document.querySelector('.crud-support-done').innerHTML = "route <span style='color:pink;'>" + routeNameEl.value + "</span>  created";
       const payload = { routeName, modelObjName, fields, embellishments: selectedCheckboxes() }
       vscode.postMessage({ command: 'createCrudSupport', payload: payload })
