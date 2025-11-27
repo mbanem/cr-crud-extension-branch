@@ -89,14 +89,14 @@ function dbSelectListDataEntry(kind:string){
 	}
 }
 
+
 const ordered = [
   'id', 'authorId', 'userId', 'employeeId', 'customerId', 'ownerId',
   'firstName', 'lastName', 'middleName', 'name', 'email',
   'password', 'role', 'updatedAt'
 ];
-
 function sortArrByOrdered(arr: string[]) {
-  const orderedPart = ordered.map((key) => arr.find((item) => item === `${key}`)).filter(Boolean);
+  const orderedPart = ordered.map( (key) => arr.find((item) => item.startsWith(key +':'))).filter(Boolean);
   const leftoverPart = arr.filter((item) => {
     const key = item.split(':')[0].trim();
     return !ordered.includes(key);
@@ -131,7 +131,7 @@ function fieldTypeList(excludeName: string = ''){
       `;
     }
 	}
-	return fieldTypeList.slice(0,-5);
+	return fieldTypeList.slice(0,-7);
 }
 function passwordHashAndToken(){
 	if (modelObjName_ !== 'user') {
@@ -152,6 +152,15 @@ export const sleep = async (ms: number) => {
       resolve(ms)
     }, ms)
   })
+}
+
+export const sixHash = () => {
+  const a = (Math.random() * 46656) | 0;
+  const b = (Math.random() * 46656) | 0;
+  return a.toString(36).slice(-3) + b.toString(36).slice(-3);
+};
+export const id = () => {
+  return (Math.random() * 10 ** 8).toString(36).replace(/\./g, '')
 }
 
 export const resetButtons = (buttons: HTMLButtonElement[]) => {
@@ -228,17 +237,11 @@ export const setPlaceholderColor = (color: string) => {
   }
 }
 
-export const capitalize = (str: string) => {
-  const spaceUpper = (su: string) => {
-    // getting _string so return ' John' with a leading space
-    return \` \${su[1]?.toUpperCase()}\`
-  }
-  let s = str[0]?.toUpperCase() + str.slice(1)
-  return s
-    .replace(/\b[a-z](?=[a-z]{2})/g, (char) => char.toUpperCase())
-    // snake_string_format replace _ with space
-    .replace(/(_\w)/, spaceUpper)
-}
+export const capitalizes = (str: string) => {
+  str = str.replace(/_/gm, ' ').trim();
+  let s = (str[0] as string)?.toUpperCase() + str.slice(1);
+  return s.replace(/\b[a-z](?=[a-z]{2})/g, (char: string) => char.toUpperCase());
+};
 
 String.prototype.capitalize = function () {
   return capitalize(this as string)
@@ -426,7 +429,7 @@ export const load: PageServerLoad = (async ({locals}) => {
 		return fail(400, { message: 'No  ${modelObjName_s} in db' });
 	}
   const users = await db.user.findMany({
-    select: {${fieldsList('User')}}
+    select: {id: true, firstName: true, lastName: true, email: true, role: true, updatedAt: true}
   });
 	return {
     locals,
@@ -437,6 +440,7 @@ export const load: PageServerLoad = (async ({locals}) => {
 
 export const actions: Actions = {
 	create: async ({ request }) => {
+    // exclude id from the list of columns
     const { ${fNamesList('id')} } = Object.fromEntries(
       await request.formData()
     ) as {
@@ -685,6 +689,7 @@ function spinners_(){
             caption=${caption}
             formaction="?/${caption}"
             hidden={${hid}}
+            {color}
           >
           </CRSpinner>
           `;
@@ -764,7 +769,9 @@ function inputBox(name:string, type: string){
 function submitFunc(){
   return;
 }
-
+let ix = 0; // render up to five object properties in the rowList
+let rowList = '<p id={row.key}>';
+let set = new Set<string>();
 let variables = ``;
 let uiElements:any[] = [];
 let theInitValues: string[] = [];
@@ -792,9 +799,11 @@ function initValues(){
           `;
     clean_snap += name + `: null,
     `;
-    variables += `let ${name}El: Types.TCRInput | null = null;
-  `;
-
+    set.add( `let ${name}El: Types.TCRInput | null = null;
+  `);
+    if (ix++ < 5){
+      rowList += `{row.${name}} &nbsp;`;
+    }
     uiElements.push(`${name}El`);
     if (name !== 'password'){
       uiSelect.add(name);
@@ -867,6 +876,8 @@ function initValues(){
   updateFields = updateFields.replace(/u\.password/, "''").slice(0,-11);
   uiSelectFields  = Array.from(uiSelect).join(',\n');
   theInitValues = [clean_snap, partialType, updateFields];
+  variables = Array.from(set).join('');
+  rowList = rowList.slice(0,-7) +'</p>';
 }
 
 
@@ -948,38 +959,49 @@ let plusPageSvelte = `
     data: PageData;
     form: ActionData;
   };
+
   let { data, form }: ARGS = $props();
   const idIsNumeric = ${idIsNumeric_};
+
+  // variables bound to CRInput components
   ${variables}
-  let uiElements:Array<Types.TCRInput> = [${uiElements}];
+
+  let formEl:  HTMLFormElement | null = null;
+  // based on boxId document.getElementById founds them
+  let uiElements:Array<HTMLInputElement> = [];
+  // changes are not visible inside the snap's scope so we need
+	// another scope to see the changes and new scope is a func snap_()
   let nullSnap = {
     ${theInitValues[0]}
   } as Types.${modelObjCName_}Partial;
 
   let snap = $state<Types.${modelObjCName_}Partial>(nullSnap);
+  // changes not visible inside the snap's scope so we need
+  // another scope to see the changes and new scope is a func snap_()
   const snap_ = () => {
     return snap;
   };
 
   
+  // changing the id triggers updates or row items but must be
+  // in effect only when uiElements[0] is docs.activeElement
   const rowSelected = async (event: MouseEvent) => {
 		event.preventDefault();
 		const el = event.target as HTMLParagraphElement;
     // render record list with leading record id
-    let idx = el.innerText.split(':')[0];
+    let idx = el.innerText.split(' ')[0];
 		let id = idIsNumeric ?  Number(idx):  String(idx);
     snap = data.${modelObjName_s}?.filter(
 			(el: Types.${modelObjCName_}Partial) => el.id === id
 		)[0] as Types.${modelObjCName_}Partial;
     await utils.sleep(300);
-		if (uiElements[1]) {  // are the elements initialized already?
-			uiElements[0].setInputBoxValue(id);
-			uiElements[1].setFocus();
-			uiElements[0].setInputBoxValue(id);
+		if (uiElements && uiElements[0] && uiElements[1]) {
+			uiElements[0].value = String(id);
+			uiElements[1].focus();
 		}	
   };
 
-  // needed for CRActivity
+  // needed for CRActivity component
   let selectedUserId = $state(data.locals?.user.id) as string;
 
   let btnCreate: HTMLButtonElement;
@@ -997,7 +1019,7 @@ let plusPageSvelte = `
   // for Create new record full formValid with no id must be true
   let formDataValid = $derived.by(() => {
     const status = [true, false];
-    if (utils.same<Types.${modelObjName_s}Partial>(snap_(), nullSnap)) return [false, false];
+    if (utils.same<Types.${modelObjCName_}Partial>(snap_(), nullSnap)) return [false, false];
     for (const [key, value] of Object.entries(snap_())) {
       if ('id|updatedAt'.includes(key)) continue;
       if (value) {
@@ -1009,6 +1031,7 @@ let plusPageSvelte = `
     return status;
   });
 
+  // control which button is visible at a moment
   let dBtnCreate = $state(true);
   let dBtnUpdate = $state(true);
   let dBtnDelete = $state(true);
@@ -1018,9 +1041,8 @@ let plusPageSvelte = `
 		dBtnCreate = idOK || !formDataValid[0];
 		dBtnUpdate = !idOK || !formDataValid[1];
 		dBtnDelete = !idOK;
-		if (uiElements[0] === document.activeElement) {
-      uiElements[0].required = dBtnCreate;
-      const id = (uiElements[0] as Types.TCRInput)?.getInputBoxValue()
+		if (uiElements && uiElements[0] === document.activeElement) {
+      const id = (uiElements[0] as HTMLInputElement)?.value;
       if (id) {
         const sn = data.${modelObjName_s}?.filter(
           (el) => el.id === id
@@ -1029,6 +1051,7 @@ let plusPageSvelte = `
           snap.name = sn.name
         }
       }
+      uiElements[0].required = dBtnCreate;  // is id required?
     }
 	});
 
@@ -1045,13 +1068,15 @@ let plusPageSvelte = `
     clear: false    // TODO not need?
   });
 
-  const enhanceSubmit: SubmitFunction = async ({ action, formData, cancel }) => {
-    spin[action.search.slice(2)] = true // start spinner animation  
-    if (action.search === '?/clear') {
-			snap = nullSnap;
-			cancel();
-			return false;
+  const enhanceSubmit: SubmitFunction = async ({ action, formData, controller, submitter }) => {
+		if (submitter?.getAttribute('formaction') === '?/clear') {
+			// stop the enhanced submit (chatGPT)
+			controller.abort();
+			formEl?.reset();
+			return;
 		}
+    spin[action.search.slice(2)] = true; // start spinner animation
+
     const required:string[] = [];
     for (const [key, value] of Object.entries(snap)) {
       formData.set(key, value as string);
@@ -1085,8 +1110,6 @@ let plusPageSvelte = `
         result = page.status === 200 ? "${modelObjName_} updated" : 'update failed';
       } else if (action.search === '?/delete') {
         result = page.status === 200 ? "${modelObjName_} deleted" : 'delete failed';
-        // iconDelete.classList.toggle('hidden');
-        // utils.hideButtonsExceptFirst([btnCreate, btnUpdate, btnDelete]);
       }
       spin[action.search.slice(2)] = false; // stop spinner animation
       invalidateAll();
@@ -1096,15 +1119,26 @@ let plusPageSvelte = `
     }
   };
   // let owner = true;
-  const color = 'blue';   // spinner color
-  // const handleWindowLoad = () => {
-  //   console.log('page fully loaded');
-  // }
-  onMount( () => {
-		if (uiElements[1]) {
-			uiElements[1].setFocus();
-			uiElements[0].setFocus();
+  const color = '#4a65b6'; // spinner color
+  const ${modelObjName_s}WithKey = $derived(
+    data.${modelObjName_s}?.map(item => ({
+        ...item,
+        key: utils.sixHash()
+    }))
+  );
+  const fetchUiElements = async () => {
+		for (let i = 0; i < 4; i++) {
+			if (idEl && nameEl) {
+				uiElements[0] = document.getElementById(idEl.boxId()) as HTMLInputElement;
+				uiElements[1] = document.getElementById(nameEl.boxId()) as HTMLInputElement;
+			}
+			if (uiElements[0] && uiElements[1]) break;
+			await utils.sleep(200);
 		}
+	};
+  onMount(() => {
+		uiElements[0] = document.getElementById(idEl.boxId()) as HTMLInputElement;
+		uiElements[1] = document.getElementById(nameEl.boxId()) as HTMLInputElement;
 	});
 </script>
 <!-- <svelte:window onload={handleWindowLoad} /> -->
@@ -1115,7 +1149,7 @@ ${cr_Activity}
 
 <div class='two-column-grid'>
   <div class='left-column'>
-    <form action="?/create" method="post" use:enhance={enhanceSubmit}>
+    <form action="?/create" method="post" use:enhance={enhanceSubmit} bind:this={formEl}>
       <div class='form-wrapper'>
         ${inputBoxes}
         <div class='buttons-row'>
@@ -1127,10 +1161,9 @@ ${cr_Activity}
   </div> 
 
   <div class='right-column' onclick={rowSelected} aria-hidden={true}>
-    <!-- argument true to return an array not a string -->
-    {#each data.${modelObjName_s} as r (r.id)}
+    {#each ${modelObjName_s}WithKey as row (row.key)}
       <div class='grid-row'>
-        <p>{r.id}: {r.name}</p>
+        ${rowList}
       </div>
     {/each}
   </div>
@@ -1232,7 +1265,7 @@ const snap_ = () => {
   return snap;
 };
 let selectedUserId = $state(
-  data.locals?.User.id
+  data.locals?.user.id
 );
 
 $effect(() => {
@@ -1252,6 +1285,7 @@ let loading = $state<boolean>(false); // toggling the spinner
 let btnCreate: HTMLButtonElement;
 let btnUpdate: HTMLButtonElement;
 let btnDelete: HTMLButtonElement;
+let btnClear: HTMLButtonElement;
 let iconDelete: HTMLSpanElement;
 let result = $state('');
 const clearMessage = () => {
@@ -1261,30 +1295,38 @@ const clearMessage = () => {
 };
 
 // returns status[formValid, partiallyValid], on partiallyValid we can do update
-  // for Create new record full formValid with no id must be true
-  let formDataValid = $derived.by(() => {
-    const status = [true, false];
-    if (snap_() === nullSnap) return [false, false];
-    for (const [key, value] of Object.entries(snap_())) {
-      if ('id|updatedAt'.includes(key)) continue;
-      if (value) {
-        status[1] = true;
-      } else {
-        status[0] = false;
-      }
+// for Create new record full formValid with no id must be true
+let formDataValid = $derived.by(() => {
+  const status = [true, false];
+  if (snap_() === nullSnap) return [false, false];
+  for (const [key, value] of Object.entries(snap_())) {
+    if ('id|updatedAt'.includes(key)) continue;
+    if (value) {
+      status[1] = true;
+    } else {
+      status[0] = false;
     }
-    return status;
-  });
+  }
+  return status;
+});
 
-  let dBtnCreate = $state(true);
-  let dBtnUpdate = $state(true);
-  let dBtnDelete = $state(true);
-  let idOK = $derived(crId_() !== null && crId_()?.length === 36);
-  $effect(() => {
-    dBtnCreate = idOK || !formDataValid[0];
-    dBtnUpdate = !idOK || !formDataValid[1];
-    dBtnDelete = !idOK;
-  });
+let dBtnCreate = $state(true);
+let dBtnUpdate = $state(true);
+let dBtnDelete = $state(true);
+
+let idOK = $derived(crId_() !== null && crId_()?.length === 36);
+$effect(() => {
+  dBtnCreate = idOK || !formDataValid[0];
+  dBtnUpdate = !idOK || !formDataValid[1];
+  dBtnDelete = !idOK;
+});
+
+let spin: IStringBoolean = $state({ 
+  create: false, 
+  update: false, 
+  delete: false,
+  clear: false    // TODO not need?
+});
 
 const clearForm = (event?: MouseEvent | KeyboardEvent) => {
   event?.preventDefault();
@@ -1342,7 +1384,8 @@ const enhanceSubmit: SubmitFunction = async ({ action, formData }) => {
   }
 
 }
-let owner = true;
+// let owner = true;
+const color = '#4a65b6';
 const toggleColor = (event: MouseEvent, caption?: string) => {
   console.log('caption', caption)
   const grand = (event.target as HTMLSpanElement)?.parentElement?.parentElement;
@@ -1372,9 +1415,9 @@ ${cr_Activity}
   </div>
   <div class="right-column" onclick={rowSelected} aria-hidden={true}>
 		<!-- argument true to return an array not a string -->
-		{#each data.${modelObjName_s} as r (r.id)}
+		{#each data.${modelObjName_s}WithKey as row (row.key)}
 			<div class="grid-row">
-				<p>{r.id}: {r.name}</p>
+				<p id={row.key}>{row.id}: {row.name}</p>
 			</div>
 		{/each}
 	</div>
@@ -1519,21 +1562,15 @@ function createCRInput(){
 		clearOnInputIsReady = false
 	}: PROPS = $props();
 
+  let elId = utils.sixHash();
   const labelUp = 'opacity:1;top:3px;z-index:10;';
 	const labelDown = 'opacity:0.5;top:25px;z-index:10;';
 
-	export const capitalizes = (str) => {
-		const spaceUpper = (su) => {
-			// getting _string so return ' String' with a leading space
-			return \` \${su[1]?.toUpperCase()}\`;
-		};
-		let s = str[0]?.toUpperCase() + str.slice(1);
-		return (
-			s
-				.replace(/[a-z](?=[a-z]{2})/g, (char) => char.toUpperCase())
-				// snake_string_format replace _ with space
-				.replace(/(_w)/, spaceUpper)
-		);
+  // words separated by space or underscore
+	export const capitalizes = (str: string) => {
+		str = str.replace(/_/gm, ' ').trim();
+		let s = (str[0] as string)?.toUpperCase() + str.slice(1);
+		return s.replace(/\b[a-z](?=[a-z]{2})/g, (char: string) => char.toUpperCase());
 	};
 
 	String.prototype.capitalizes = function () {
@@ -1601,25 +1638,14 @@ function createCRInput(){
 		event.preventDefault();
     labelStyle = labelUp;
 		if (event.key === 'Tab') return;
-		// if keypress is Enter and exportValueOn does not include Enter we return
-		if (exportValueOn.includes('enter') && event.key !== 'Enter') {
-			return;
-		}
-		// already prevented blur|keypress and blur|enter
-		// blur always follows if any case
-		if (!'keypress|blur|enter|blur'.includes(exportValueOn) && value) {
-			return;
-		}
-		if (value && (value as string).length > 0) {
 
-			// if input should be returned
-			// (blur is handled in a separate onBlurHandler)
+		if (value && (value as string).length > 0) {
 			if (
 				exportValueOn.includes('keypress') ||
 				(exportValueOn.includes('enter') && event.key === 'Enter')
 			) {
 				if (onInputIsReadyCallback) {
-          value = capitalizes(value);
+          value = capitalizes(value as string);
 					onInputIsReadyCallback();
 					if (clearOnInputIsReady) {
 						value = '';
@@ -1636,6 +1662,12 @@ function createCRInput(){
 	let labelStyle = $state(labelDown);
 	let label: HTMLLabelElement;
 	let inputEl: HTMLInputElement | HTMLTextAreaElement;
+  // in order to compare inputEl with document.activeElement
+  // document.getElementById(inputEl.boxId()) gets wrapped input box
+  // otherwise idEl is a wrapper reference newer equal to doc.activeElement
+  export const boxId = () => {
+		return inputEl.id;
+	};
 
 	export const getInputBoxValue = () => {
 		return typeof value === 'number' ? Number(inputEl.value) : String(inputEl.value);
@@ -1661,7 +1693,9 @@ function createCRInput(){
     } else {
       inputEl.setAttribute('required', 'true');
 		}
+    labelStyle = value ? labelUp : labelDown;
 	});
+
 	onMount(() => {
 		label = document.getElementsByTagName('label')[0] as HTMLLabelElement;
 		if (required) {
@@ -1675,7 +1709,7 @@ function createCRInput(){
 <div class="input-wrapper" style="margin:{margin};">
 	{#if type === 'textarea'}
 		<textarea
-			id="inp"
+			id={elId}
 			bind:this={inputEl}
 			rows={Number(rows)}
 			cols={Number(cols)}
@@ -1689,7 +1723,7 @@ function createCRInput(){
 		</textarea>
 	{:else}
 		<input
-			id="inp"
+			id={elId}
 			bind:this={inputEl}
 			type={type ? type : 'text'}
 			required
@@ -1700,7 +1734,7 @@ function createCRInput(){
 			disabled={false}
 		/>
 	{/if}
-	<label for="inp" onclick={setFocus} aria-hidden={true} style={\`\${labelStyle}\`}>
+	<label for={elId} onclick={setFocus} aria-hidden={true} style={\`\${labelStyle}\`}>
 		{title}
 		<span class="err">
 			{err ? \` - \${err}\` : ''}
@@ -2005,7 +2039,7 @@ function createCRActivity(){
   <span style="color:gray;font-size:24px;"
     >{utils.capitalize(PageName)} Page</span
   >
-  {#if user?.role === 'ADMIN' && users.length > 1}
+  {#if user?.role === 'ADMIN' && users && users.length > 1}
     <select bind:this={selectBox} bind:value={selectedUserId}>
       {#each users as the_user}
         <option value={the_user.id}>
@@ -2130,6 +2164,7 @@ CRTooltip could accept the following props, though all are optional
   import { type Snippet, onMount } from 'svelte';
   import { cubicInOut } from 'svelte/easing'; // for animated transition
   import type { EasingFunction } from 'svelte/transition';
+  import * as utils from '$lib/utils';
 
   // fade scale animation for displaying/hiding tooltip
   export interface FadeScaleParams {
@@ -2170,17 +2205,12 @@ CRTooltip could accept the following props, though all are optional
     };
   };
 
-  const sixHash = () => {
-    const a = (Math.random() * 46656) | 0;
-    const b = (Math.random() * 46656) | 0;
-    return a.toString(36).slice(-3) + b.toString(36).slice(-3);
-  };
 
-  const hoveringId = 'hovering-' + sixHash();
+  const hoveringId = 'hovering-' + utils.sixHash();
   // as caption and panel are mutually exclusive
   // even when both are received via $props()
   // we use the same tooltipPanelId for both
-  // const tooltipPanelId = 'tooltip-' + sixHash();
+  // const tooltipPanelId = 'tooltip-' + utils.sixHash();
   let tooltipPanelEl = $state<HTMLElement | null>(null);
   const round = Math.round;
 
@@ -2867,7 +2897,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
     // vscode.window.showInformationMessage('EXT: rootPath == '+ rootPath),
     // const nonce = getNonce();
-    panel.webview.html = getWebviewContent(panel.webview, context.extensionUri, noPrismaSchema, installPartTwoPending, sortArrByOrdered);
+    panel.webview.html = getWebviewContent(panel.webview, context.extensionUri, noPrismaSchema, installPartTwoPending);
 
     panel.webview.onDidReceiveMessage(async (msg) => {
       if (msg.command === 'installPrisma'){
@@ -2987,7 +3017,6 @@ export async function activate(context: vscode.ExtensionContext) {
             payload: parsedSchema,
             rootPath: rootPath,
             modelsFieldNames,
-            sortArrByOrdered
           });
           // vscode.window.showErrorMessage('This is a test vscode.window.showErrorMessage');
         } catch (error) {
@@ -3026,7 +3055,9 @@ export async function activate(context: vscode.ExtensionContext) {
         modelObjName_s = modelObjName_.trim().replace(/(.)$/, (c) => c === 'y' ? 'ies' : c+'s');
         modelObjCName_ = modelObjName;  //[0].toUpperCase() + modelObjName.slice(1);
         fields_= fields.join().replace(/Int|int/g, 'number').replace(/:\s*?(\w+)/g, match => match.toLowerCase()).split(',');
-        outputChannel.appendLine(JSON.stringify(fields_,null,2));outputChannel.show();
+        fields_ = sortArrByOrdered(fields_ as string[]) as string[];
+        outputChannel.appendLine('fields_: ' + JSON.stringify(fields_,null,2));outputChannel.show();
+
         embellishments_ = embellishments;
         // createUtils(routeName, fields);
         const funcList: FuncList = {
@@ -3041,7 +3072,7 @@ export async function activate(context: vscode.ExtensionContext) {
         // reference from the funcList above
         for(const fun of Object.values(embellishments)){
           try{
-            funcList[fun]() // call the function reference
+            funcList[fun](); // call the function reference
           }finally{}
         }
         spinners_();
@@ -3158,8 +3189,7 @@ function getWebviewContent(
   webview: vscode.Webview, 
   extensionUri: vscode.Uri, 
   noPrismaSchema:boolean, 
-  installPartTwoPending:boolean,
-  sortArrByOrdered: any
+  installPartTwoPending:boolean
 ): string {
 
   // Enable scripts in the webview
@@ -3583,7 +3613,6 @@ created in the route specified in the Route Name input box.
   let tablesModel = 'waiting for schemaModels '
   let rootPath = ''
   const vscode = acquireVsCodeApi()
-  const sortArr ='';
   const noPrismaSchemaL = ${noPrismaSchema} ? true : false;
   const installPartTwoPending = ${installPartTwoPending} ? true : false;
 
@@ -3753,11 +3782,9 @@ created in the route specified in the Route Name input box.
     }
 
     if (msg.command === 'renderSchema') {
-      // vscode.postMessage({command: 'log',  text: 'EXT: renderSchema' });
       renderParsedSchema(msg.payload);
       rootPath = msg.rootPath;
       fieldModels= msg.modelsFieldNames;
-      sortArr = msg.sortArrByOrdered;
     }
 
     if(msg.command === 'taskError'){
@@ -3809,7 +3836,6 @@ created in the route specified in the Route Name input box.
 
   function clearLabelText(){
     clearTimeout(timer);
-    // msgEl.innerHTML += '<br/>clearLabelText';
 
     labelEl.style.color = '';
     routeLabelNode.textContent = 'Route Name';
@@ -3905,18 +3931,12 @@ created in the route specified in the Route Name input box.
         changeLabelText('pink', 'Change Route Name if necessary', 4000)
         //----------------
         if (fieldModels){
-          msgEl.innerHTML += '<br/>SUMMARY fieldModels found: '+ JSON.stringify(fieldModels) + ' modelObjName: '+ modelObjName;
+          // msgEl.innerHTML += '<br/>SUMMARY fieldModels found: '+ JSON.stringify(fieldModels) + ' modelObjName: '+ modelObjName;
           
           try{
-            msgEl.innerHTML += '<br/>before theFields = fieldModels.'+ modelObjName;
-
-            // msgEl.innerHTML += '<br/>'+ sortArr;
-            // theFields = sortArr(Array.from(fieldModels[modelObjName]), ordered);
-            theFields = Array.from(fieldModels[modelObjName]);
-            // msgEl.innerHTML += '<pre>theFields: '+ theFields +'</pre>';
+            theFields = fieldModels[modelObjName];
+            msgEl.innerHTML += '<pre>'+ theFields + '</pre>';
             if (theFields){
-              // msgEl.innerHTML += '<br/>fieldModels[modelObjName] found for modelObjName: '+modelObjName;
-              // msgEl.innerHTML += '<br/>JSON on the Fields: '+ JSON.stringify(theFields) + ' theFields.length '+ theFields.length;
               for (field of theFields){
                 // msgEl.innerHTML += '<br/>theFields loop: '+ theFields[i];
                 fieldNameEl.value = field;
