@@ -2,10 +2,14 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 // to find the work folder path
 import * as childProcess from 'child_process';
 import pluralize from 'pluralize';
 
+
+const pgPassPath = path.join(os.homedir(), '.pgpass');;
+let inputBoxWidth_ = '';
 let rootPath = '';
 let routesPath = '';
 let routeName_ ='';
@@ -17,16 +21,15 @@ let fields_:string[]=[];
 interface IStringBoolean {
   [key: string]: boolean;
 }
-
-interface ISelectFields {
+interface IStrKeyStrVal {
   [key: string]: string;
 }
+let db_:IStrKeyStrVal = {};
 interface ISelectBlocks {
-  [key: string]: ISelectFields;
+  [key: string]: IStrKeyStrVal;
 }
 let selectBlocks: ISelectBlocks = {};
-
-let idIsNumeric_ = false;
+let sudoName_ = '';
 let embellishments_:string[]=[];
 let terminal: vscode.Terminal | undefined;
 let noPrismaSchema = false;
@@ -47,9 +50,21 @@ function fNamesList(excludeName: string = ''){
       fList += `${fieldName}, `;
     }
   }
-  return fList.slice(0,-2)
+  return fList.slice(0,-2);
 }
-function dbSelectListDataEntry(kind:string){
+  
+/*
+  fields_: [
+    "id: string",
+    "userId: string",
+    "title: string",
+    "content: string",
+    "priority: number",
+    "updatedAt: date",
+    "completed: boolean"
+  ]
+*/
+function dbSelectListDataEntry(kind:string, strToNum:boolean = false){
 	let f =``;
 	switch(kind){
 		case 'Select': {
@@ -61,11 +76,9 @@ function dbSelectListDataEntry(kind:string){
 			return f;
 		}
 		case 'List':{
-			let el = {}
 			return (fields_.join()+',').replace(/:\s*?\w+,/g,', ').slice(0,-2);
 		}
 		case '?List':{
-			let el = {}
 			return (fields_.join()+',').replace(/:/g, '?:').replace(/:\s*?\w+,/g,', ').slice(0,-2);
 		}
     case 'formData': {
@@ -89,11 +102,12 @@ function dbSelectListDataEntry(kind:string){
 	}
 }
 
-
+// every object to sort its leading props per the ordered array
 const ordered = [
   'id', 'authorId', 'userId', 'employeeId', 'customerId', 'ownerId',
-  'firstName', 'lastName', 'middleName', 'name', 'email',
-  'password', 'role', 'updatedAt'
+  'firstName', 'lastName', 'middleName', 'name','profileId', 'dob', 
+  'dateOfBirth', 'email', 'password', 'address', 'city', 'state', 
+  'title', 'content', 'category',  'role', 'priority', 'price', 'updatedAt'
 ];
 function sortArrByOrdered(arr: string[]) {
   const orderedPart = ordered.map( (key) => arr.find((item) => item.startsWith(key +':'))).filter(Boolean);
@@ -103,17 +117,45 @@ function sortArrByOrdered(arr: string[]) {
   });
   return [...orderedPart, ...leftoverPart];
 }
-
-function createSelectBlocks(partialTypes: string): void {
-  let blocks: ISelectBlocks = {};
-  const typeBlocks = [
-    ...partialTypes.replace(/export type\s*|Partial/g, '').matchAll(/(\w+)\s*=\s*{([\s\S]*?)}/g)
-  ];
-  for (const [, name, body] of typeBlocks) {
-    let props = sortArrByOrdered([...body.matchAll(/(\w+)\s*:/g)].map((m) => m[1]));
-    blocks[name] = Object.fromEntries(props.map((p) => [p, true]));
+// selectBlocks['User'] returns object of  id: "string | null", firstName: "string | null", ...
+// 
+function createSelectBlocks(partialTypes: string){
+	// Regex to capture: "UserPartial" and the "{...}"
+	const typeRegex = /export\s+type\s+(\w+)Partial\s*=\s*\{([\s\S]*?)\};/g;
+	let match;
+	while ((match = typeRegex.exec(partialTypes)) !== null) {
+	  const objectName = match[1];     // e.g. "User"
+	  const body = match[2].trim();    // content inside { ... }
+	  // Split lines inside the type body and pre-order
+    const lines = sortArrByOrdered(body
+      .split("\n")
+      .map(l => l.trim())
+      .filter(l => l.length && l.includes(":"))
+    );
+	  // Convert each line "key: value;" → { key: "value" }
+    const obj:IStrKeyStrVal = {};
+    for (const line of lines) {
+      const [key, value] = (line?.replace(";", "").split(":") as string[]).map(x => x.trim());
+      obj[key] = value;
+    }
+    selectBlocks[objectName] = obj;
+	}
+}
+// blockChangeProps('User', 'no null') returns object of id: string, firstName: string, ...
+// blockChangeProps('User') returns object of id: true, firstName: true, ...
+// blockChangeProps('User', ': string') turns every prop type to string id: string, firstName: string, ...
+function blockChangeProps(block:string, prop:string = ': true'){
+	// initial props "string | null" to be replaced with the prop
+	// or when prop === 'no null' to remove | null from prop type
+	let list = `{ `;
+  for(const [k,v] of Object.entries(selectBlocks[block])){
+    if (prop === 'no null'){
+    list += `${k}: ${v.replace(/ \| null/,', ')}`;
+    }else{
+    list += `${k}${prop}, `;
+    }
   }
-  selectBlocks = blocks;
+  return list.slice(0,-2)+' }';
 }
 
 function fieldsList(block:string){
@@ -163,6 +205,22 @@ export const id = () => {
   return (Math.random() * 10 ** 8).toString(36).replace(/\./g, '')
 }
 
+interface IDbRecord {
+  [key: string]: string|number|boolean|Object;  
+}
+export const toNumerics = (data: IDbRecord) => {
+  let list = \`{ \`;
+  fields_.map((row:string, index:number) => {
+    const [ name, type ] = row.replace(/\s+/g,'').split(':');
+    const d = data[index];
+    list += (type==='number') ? Number(d)
+                              : 'boolean|Date'.includes(type) 
+                                ? d
+                                : \`'\${d}'\`
+    list += ', ';
+  });
+  return list.slice(0, -2)+ ' }';
+}
 export const resetButtons = (buttons: HTMLButtonElement[]) => {
   try {
     buttons.forEach((btn) => {
@@ -196,12 +254,12 @@ export const getCSSValue = (varName: string): string | undefined => {
   }
 };
 
-export const setCSSValue = (varName: string, value: string) => {
+export const setCSSValue = (varName: string, value: string, priority:string=null) => {
   try {
     if (browser) {
       const root = document.querySelector(':root') as Node
       if (root) {
-        root.style.setProperty(varName, value)
+        root.style.setProperty(varName, value, priority)
       }
     }
   } catch (err: string | Error) {
@@ -210,12 +268,12 @@ export const setCSSValue = (varName: string, value: string) => {
   }
 }
 
-export const setTextColor = (varName: string, color: string) => {
+export const setTextColor = (varName: string, color: string, priority:string=null) => {
   try {
     if (browser) {
       const root = document.querySelector(':root')
       if (root) {
-        root.style.setProperty(varName, color)
+        root.style.setProperty(varName, color, priority)
       }
     }
   } catch (err: string | Error) {
@@ -292,10 +350,10 @@ export const db = new PrismaClient({
 `;
 }
 
-function getPartialTypes(fullTypes: string) {
-	fullTypes = fullTypes.replace(/(\s*?).*?password.*?:/mg,'$1\t\tpassword:').replace(/export type (\w+)\s*=/g, 'export type $1Partial =');
+function getPartialTypes(lowercaseTypes: string) {
+	lowercaseTypes = lowercaseTypes.replace(/(\s*?).*?password.*?:/mg,'$1\t\tpassword:').replace(/export type (\w+)\s*=/g, 'export type $1Partial =');
 	const allowedFields = 'string|number|boolean|Date|Role|password';
-	const excludedFields = '[]|createdAt|Hash|Token|Post|Blog|User|Category|Todo|Profile|.*?Id';
+	const excludedFields = '[]|createdAt|Hash|Token|Post|Blog|User|Category|Todo|Profile';
 	let allowedRegex = new RegExp(allowedFields);
 	let excludedRegex = new RegExp(excludedFields);
 	function uiField(field:string){
@@ -303,16 +361,16 @@ function getPartialTypes(fullTypes: string) {
 		let nok = field.match(excludedRegex);
 		return ok && !nok;
 	}
-  // as the fullTypes begin with split string 'export type' the first
+  // as the lowercaseTypes begin with split string 'export type' the first
   // entry will hold an empty type , so skip it with sp.slice(1)
-	const sp = fullTypes.split('export type');
+	const sp = lowercaseTypes.split('export type');
 	let f ='';
 	sp.slice(1).forEach((type: string) => {
 		let fields = type.split('\n');
 		f += 'export type '+ fields[0]+ '\n';
 		fields.slice(1,-1).forEach(field => {
 			if (uiField(field)){
-					f += field.replace(/;/, ' | null;\n')
+					f += field.replace(/;/, ' | null;\n');
 				}
 		})
 		f += '};\n';
@@ -323,6 +381,9 @@ export type TCRActivity = typeof CRActivity;
 export type TCRTooltip = typeof CRTooltip;
 export type TCRSpinner = typeof CRSpinner;
 export type TCRSummaryDetail = typeof CRSummaryDetail;
+export interface IStringBoolean {
+  [key: string]: boolean;
+}
   `;
 }
 
@@ -401,7 +462,15 @@ function getHooksPage() {
     return await resolve(event);
   }) satisfies Handle;`;
 };
-
+function shouldSelectUsers(){
+  if (modelObjName_ !== 'user'){
+    return `const users = await db.user.findMany({
+    select: ${blockChangeProps('User').replace(/password: true,/,'')}
+  });`;
+  }
+  return '';
+}
+// called for User and other objects models
 function getServerPage(){
   let imp = `
 import { db } from '$lib/server/db';
@@ -413,13 +482,9 @@ import { fail } from '@sveltejs/kit';
 import * as utils from '$lib/utils';
 import* as Types from '$lib/types/types';
 
-const idIsNumeric = ${idIsNumeric_};
 export const load: PageServerLoad = (async ({locals}) => {
 	const ${modelObjName_s} = await db.${modelObjName_}.findMany({
-		select:{
-      ${fNamesList().replace(/password,?\s*?/,'').replace(/\s+/g, '').replace(/,/g, `: true,
-      `)+ ': true'}
-		},
+		select: ${blockChangeProps(modelObjCName_).replace(/password: true,/,'')},
     orderBy:{
 			id: 'asc'
 		}
@@ -428,9 +493,8 @@ export const load: PageServerLoad = (async ({locals}) => {
 	if (! ${modelObjName_s}) {
 		return fail(400, { message: 'No  ${modelObjName_s} in db' });
 	}
-  const users = await db.user.findMany({
-    select: {id: true, firstName: true, lastName: true, email: true, role: true, updatedAt: true}
-  });
+  
+  ${shouldSelectUsers()}
 	return {
     locals,
     users,
@@ -441,12 +505,12 @@ export const load: PageServerLoad = (async ({locals}) => {
 export const actions: Actions = {
 	create: async ({ request }) => {
     // exclude id from the list of columns
-    const { ${fNamesList('id')} } = Object.fromEntries(
+    let { ${fNamesList('id')} } = Object.fromEntries(
       await request.formData()
     ) as {
       ${fieldTypeList('id')}
     };
-
+    console.log( ${fNamesList('id')} )
     if (!(${fNamesList('id').replace(/,/g, ' &&')})) {
       return fail(400, {
         data: {
@@ -456,10 +520,9 @@ export const actions: Actions = {
       })
     }
 
+
     const ${modelObjName_}Exists = await db.${modelObjName_}.findFirst({
-      where: {
-        ${fNamesList('id').replace(/password,?\s*?/, '').replace(/role,?\s*?/, '')}
-      }
+      where: utils.toNumerics(${fNamesList('id').replace(/password,?\s*?/, '').replace(/role,?\s*?/, '')})
     })
     if (${modelObjName_}Exists) {
       return fail(400, {
@@ -482,14 +545,14 @@ export const actions: Actions = {
   },
   // ------------------------------------------------
   update: async ({ request }) => {
-    const data = Object.fromEntries(
+    let data = Object.fromEntries(
       await request.formData()
     ) as {
       ${dbSelectListDataEntry('?formData')}
     }
-    if (idIsNumeric){
-        data.id = Number(data.id)
-    }
+    // if (idIsNumeric){
+        data = utils.toNumerics(data);
+    // }
     const { ${dbSelectListDataEntry('List')} } = data
     if (!(${dbSelectListDataEntry('List').replace(/,/g, ' || ')} )) {
       return fail(400, {
@@ -523,9 +586,9 @@ export const actions: Actions = {
       ${dbSelectListDataEntry('?formData')}
     }
 
-    if (idIsNumeric){
-        data.id = Number(data.id)
-    }
+    // if (idIsNumeric){
+        data = utils.toNumerics(data)
+    // }
     const { ${dbSelectListDataEntry('List')} } = data
     if (!(${dbSelectListDataEntry('List').replace(/,/g, ' || ')} )) {
       return fail(400, {
@@ -748,6 +811,18 @@ function inputBox(name:string, type: string){
   const required = name === 'id' ? '!dBtnCreate' : '!dBtnUpdate';
   const bindEl = `bind:this={${name}El}`;
   if (embellishments_.includes('CRInput')){
+    if ('radio|checkbox'.includes(type)){
+      return `<CRInput 
+        title="${name}"
+        ${bindEl}
+        type='${type}'
+        bind:checked={snap.${name} ${asType(type)}}
+        required={${required}}
+        width="${inputBoxWidth_}"
+      >
+      </CRInput>
+      `;
+    }
     return `<CRInput 
         title="${name}"
         ${bindEl}
@@ -756,7 +831,7 @@ function inputBox(name:string, type: string){
         capitalize={${toCapitalize(name,type)}}
         bind:value={snap.${name} ${asType(type)}}
         required={${required}}
-        width='22.5rem'
+        width="${inputBoxWidth_}"
       >
       </CRInput>
       `;
@@ -770,7 +845,9 @@ function submitFunc(){
   return;
 }
 let ix = 0; // render up to five object properties in the rowList
-let rowList = '<p id={row.key}>';
+// key added as key: utils.sixHash() to db select object list 
+// as Svelte needs unique id for {#each } loop
+let rowList = '<p id={row.key}>'; // TODO replace row with summary/details rendered via snippet
 let set = new Set<string>();
 let variables = ``;
 let uiElements:any[] = [];
@@ -801,9 +878,9 @@ function initValues(){
     `;
     set.add( `let ${name}El: Types.TCRInput | null = null;
   `);
-    if (ix++ < 5){
+    // if (ix++ < 5){
       rowList += `{row.${name}} &nbsp;`;
-    }
+    // }
     uiElements.push(`${name}El`);
     if (name !== 'password'){
       uiSelect.add(name);
@@ -877,7 +954,7 @@ function initValues(){
   uiSelectFields  = Array.from(uiSelect).join(',\n');
   theInitValues = [clean_snap, partialType, updateFields];
   variables = Array.from(set).join('');
-  rowList = rowList.slice(0,-7) +'</p>';
+  rowList = rowList.replace(/<\/p>/,'') +'</p>';
 }
 
 
@@ -950,18 +1027,12 @@ let plusPageSvelte = `
   + imports +
 
   `
-
-  interface IStringBoolean { 
-    [key: string]: boolean
-  };
-
   type ARGS = {
     data: PageData;
     form: ActionData;
   };
 
   let { data, form }: ARGS = $props();
-  const idIsNumeric = ${idIsNumeric_};
 
   // variables bound to CRInput components
   ${variables}
@@ -1046,10 +1117,10 @@ let plusPageSvelte = `
       if (id) {
         const sn = data.${modelObjName_s}?.filter(
           (el) => el.id === id
-        )[0] as Types.${modelObjCName_}Partial
-        if (sn.name !== snap.name) {
-          snap.name = sn.name
-        }
+        )[0] as Types.${modelObjCName_}Partial;
+        if (!utils.same<Types.ArticlePartial>(sn, snap)) {
+					snap = sn;
+				}
       }
       uiElements[0].required = dBtnCreate;  // is id required?
     }
@@ -1061,7 +1132,7 @@ let plusPageSvelte = `
   };
   
 
-	let spin: IStringBoolean = $state({ 
+	let spin: Types.IStringBoolean = $state({ 
     create: false, 
     update: false, 
     delete: false,
@@ -1250,23 +1321,23 @@ type ARGS = {
   form: ActionData;
 };
 let { data, form }: ARGS = $props();
-// theInitValues[1]
-const idIsNumeric = ${idIsNumeric_};
+
 let nullSnap = {
   ${theInitValues[0]}
-} as ${modelObjCName_}Partial;
+} as Types.${modelObjCName_}Partial;
 
 const crId_ = () => {
   return snap.id
 }
 // TODO what data is snap getting here it was .locals. but that could be user only not UI data
-let snap = $state<Types.${modelObjCName_}Partial>(data.${modelObjName_} as Types.${modelObjCName_}Partial ?? nullSnap);
+let snap = $state<Types.${modelObjCName_}Partial>(data.locals?.${modelObjName_} as Types.${modelObjCName_}Partial ?? nullSnap);
 const snap_ = () => {
   return snap;
 };
-let selectedUserId = $state(
-  data.locals?.user.id
-);
+let selectedUserId = $state(data.locals?.user.id) as string;
+const selectedUserId_ = () => {
+  return selectedUserId;
+}
 
 $effect(() => {
     const selUserId = selectedUserId_();
@@ -1281,12 +1352,12 @@ $effect(() => {
       }
     }
   });
-let loading = $state<boolean>(false); // toggling the spinner
+
 let btnCreate: HTMLButtonElement;
 let btnUpdate: HTMLButtonElement;
 let btnDelete: HTMLButtonElement;
 let btnClear: HTMLButtonElement;
-let iconDelete: HTMLSpanElement;
+// let iconDelete: HTMLSpanElement;
 let result = $state('');
 const clearMessage = () => {
   setTimeout(() => {
@@ -1321,7 +1392,7 @@ $effect(() => {
   dBtnDelete = !idOK;
 });
 
-let spin: IStringBoolean = $state({ 
+let spin: Types.IStringBoolean = $state({ 
   create: false, 
   update: false, 
   delete: false,
@@ -1386,15 +1457,6 @@ const enhanceSubmit: SubmitFunction = async ({ action, formData }) => {
 }
 // let owner = true;
 const color = '#4a65b6';
-const toggleColor = (event: MouseEvent, caption?: string) => {
-  console.log('caption', caption)
-  const grand = (event.target as HTMLSpanElement)?.parentElement?.parentElement;
-  
-  const style = grand?.parentElement?.style;
-  if (style){
-    style.color = style.color === 'red' ? 'blue' : 'red';
-  }
-};
 </script>
 <svelte:head>
   <title>${modelObjCName_} Page</title>
@@ -1494,9 +1556,9 @@ ${cr_Activity}
 
 const pageSveltePath = path.join(routeNamePath, '/+page.svelte');
   if (modelObjCName_ === 'User'){
-    fs.writeFileSync(pageSveltePath, plusUserSvelte, 'utf8');
+    fs.writeFileSync(pageSveltePath, plusUserSvelte, 'utf-8');
   }else{
-    fs.writeFileSync(pageSveltePath, plusPageSvelte, 'utf8');
+    fs.writeFileSync(pageSveltePath, plusPageSvelte, 'utf-8');
   }
 }
 
@@ -1512,12 +1574,21 @@ function createCRInput(){
 	import { onMount } from 'svelte';
 	type TExportValueOn = 'keypress' | 'keypress|blur' | 'enter' | 'blur' | 'enter|blur';
 
+	export type TValueLabelArr = Array<[value: string, label: string]>;
+	export type TRadioGroup = {
+		valueLabelArr?: TValueLabelArr;
+		groupValue?: string;
+	};
 	type PROPS = {
 		title: string;
 		width?: string;
 		height?: string;
 		fontsize?: string;
 		margin?: string;
+		checked?: boolean;
+		name?: string;
+		radioGroup: TValueLabelArr;
+		groupValue: string | number;
 		type?:
 			| string
 			| number
@@ -1533,7 +1604,7 @@ function createCRInput(){
 			| textarea;
 		rows?: string;
 		cols?: string;
-		value?: string | number;
+		value?: string | number | boolean | Date;
 		required?: boolean;
 		capitalize?: boolean;
 		err?: string[] | undefined;
@@ -1549,6 +1620,10 @@ function createCRInput(){
 		height = '2.5rem',
 		fontsize = '16px',
 		margin = '0',
+		checked = $bindable(false),
+		name = '',
+		radioGroup = [],
+		groupValue = $bindable(),
 		type = 'text',
 		rows = '6',
 		cols = '30',
@@ -1561,6 +1636,7 @@ function createCRInput(){
 		capitalize = false,
 		clearOnInputIsReady = false
 	}: PROPS = $props();
+
 
   let elId = utils.sixHash();
   const labelUp = 'opacity:1;top:3px;z-index:10;';
@@ -1592,18 +1668,6 @@ function createCRInput(){
 		}
 	})();
 	const topPosition = \`\${-1 * Math.floor(parseInt(fontsize) / 3)}px\`;
-
-	if (browser) {
-		try {
-			utils.setCSSValue('--INPUT-BOX-LABEL-TOP-POS', topPosition);
-			if (width) utils.setCSSValue('--INPUT-COMRUNNER-WIDTH', width as string);
-			if (height) utils.setCSSValue('--INPUT-COMRUNNER-HEIGHT', height as string);
-			if (fontsize) utils.setCSSValue('--INPUT-COMRUNNER-FONT-SIZE', fontsize as string);
-			width = utils.getCSSValue('--INPUT-COMRUNNER-WIDTH') as string;
-		} catch (err) {
-			console.log('<InputBox get/setCSSValue', err);
-		}
-	}
 
 	const onFocusHandler = (event: FocusEvent) => {
 		event.preventDefault();
@@ -1721,6 +1785,16 @@ function createCRInput(){
 			disabled={false}
 		>
 		</textarea>
+  {:else if 'checkbox' === type}
+    <input type="checkbox" required bind:checked />
+    <p>checked {checked}</p>
+  {:else if radioGroup.length}
+    <div class="radio-block">
+      {#each radioGroup as [value, label], index (index)}
+        <input class="radio-button" type="radio" id={value} bind:group={groupValue} {value} />
+        <label for={value}> {label} </label>
+      {/each}
+    </div>
 	{:else}
 		<input
 			id={elId}
@@ -1771,8 +1845,6 @@ function createCRInput(){
 		}
 		input {
 			display: inline-block;
-			width: var(--INPUT-COMRUNNER-WIDTH);
-			height: var(--INPUT-COMRUNNER-HEIGHT);
 			font-size: var(--INPUT-COMRUNNER-FONT-SIZE);
 			padding: 0 10px;
 			margin: 0;
@@ -1791,7 +1863,17 @@ function createCRInput(){
 			}
 		}
 	}
-
+  .radio-block {
+		display: grid;
+		grid-template-columns: 1rem 16rem;
+		label {
+			margin-left: 0.5rem;
+			&:hover {
+				cursor: pointer;
+				color: blue;
+			}
+		}
+	}
 	.err {
 		color: pink;
 		/* when placeholder moves on top it makes space on the right of 0.2rem*/
@@ -1800,7 +1882,7 @@ function createCRInput(){
 </style>
 `;
   const crInputPath = path.join(componentsPath, 'CRInput.svelte')
-  fs.writeFileSync(crInputPath, crInput, 'utf8');
+  fs.writeFileSync(crInputPath, crInput, 'utf-8');
 }
 
 function createCRSpinner(){
@@ -1954,7 +2036,7 @@ function createCRSpinner(){
 </style>
 `;
   const crSpinnerPath = path.join(componentsPath, 'CRSpinner.svelte')
-  fs.writeFileSync(crSpinnerPath, crSpinner, 'utf8');
+  fs.writeFileSync(crSpinnerPath, crSpinner, 'utf-8');
 }
 
 function createCRActivity(){
@@ -2096,7 +2178,7 @@ function createCRActivity(){
 `;
 
   const crActivityPath = path.join(componentsPath, 'CRActivity.svelte');
-  fs.writeFileSync(crActivityPath, crActivity, 'utf8');
+  fs.writeFileSync(crActivityPath, crActivity, 'utf-8');
 }
 
 function createCRTooltip(){
@@ -2540,7 +2622,7 @@ CRTooltip could accept the following props, though all are optional
 `;
 
   const crTooltipPath = path.join(componentsPath, 'CRTooltip.svelte');
-  fs.writeFileSync(crTooltipPath, crTooltip, 'utf8');
+  fs.writeFileSync(crTooltipPath, crTooltip, 'utf-8');
 }
 
 function createSummaryDetail(){
@@ -2618,7 +2700,7 @@ function createSummaryDetail(){
 </style>
 `;
   const crSummaryDetailPath = path.join(componentsPath, 'CRSummaryDetail.svelte');
-  fs.writeFileSync(crSummaryDetailPath, crSummaryDetail, 'utf8');
+  fs.writeFileSync(crSummaryDetailPath, crSummaryDetail, 'utf-8');
 }
 
 async function findPrismaSchemaRoot(): Promise<string | null> {
@@ -2813,7 +2895,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // const defaultFolderPath: string = '/home/mili/TEST/cr-crud-extension';
   rootPath = await execShell('pwd');
   rootPath = rootPath.replace(/\n$/,'');
-  routesPath = path.join(rootPath, '/src//routes/')
+  routesPath = path.join(rootPath, '/src//routes/');
+  sudoName_ = await execShell('whoami');
   // vscode.window.showInformationMessage('rootPath ' + rootPath)
   // vscode.window.showErrorMessage('execShell pwd '+ rootPath);
 
@@ -2897,23 +2980,37 @@ export async function activate(context: vscode.ExtensionContext) {
     }
     // vscode.window.showInformationMessage('EXT: rootPath == '+ rootPath),
     // const nonce = getNonce();
-    panel.webview.html = getWebviewContent(panel.webview, context.extensionUri, noPrismaSchema, installPartTwoPending);
+    panel.webview.html = getWebviewContent(panel.webview, context.extensionUri, noPrismaSchema, installPartTwoPending, sudoName_);
 
     panel.webview.onDidReceiveMessage(async (msg) => {
-      if (msg.command === 'installPrisma'){
-        outputChannel.appendLine('installPrisma'); outputChannel.show();
+
+      if (msg.command === 'setDbAndOwner'){
+        db_ = msg.payload;
+        // vscode.window.showInformationMessage('db/owner params '+ JSON.stringify(db_));
+        // if ( db_.name && db_.owner && db_.password ){
+        //   const content = 'localhost:'+ db_.port +':' + db_.name +':'+ db_.owner +':'+ db_.password;
+        //   fs.writeFileSync(pgPassPath, content, { 
+        //     encoding: 'utf-8',
+        //     mode: 0o600   // Very important for .pgpass! PostgreSQL requires 0600
+        //   });
+        // }
+      }
+      else if (msg.command === 'installPrismaPartOne'){
+        vscode.window.showInformationMessage('rootPath is '+ rootPath);
+        // outputChannel.appendLine('installPrismaPartOne'+ JSON.stringify(db_)); outputChannel.show();
+        // db_ = JSON.parse(msg.db);     // db.name, db.owner, db.password
         const pm = detectPackageManager();
         if (typeof pm === 'object'){
           vscode.window.showInformationMessage('detectPackageManager err:'+ pm.err);
         } else {
           xPackageManager(pm);
         }
-        // vscode.window.showInformationMessage('rootPath is '+ rootPath)
         sendToTerminal(`cd ${rootPath}`);
-        sendToTerminal(`${pm} install bcrypt @types/bcrypt; ${pm} install typescript ts-node @types/node globals -D; ${pm} i -D prisma @prisma/client; ${ex} prisma init`);
-        const prismaPath = path.join(rootPath, '/prisma/schema.prisma')
+        outputChannel.appendLine('sendToTerminal cd rootPath'); outputChannel.show();
+        sendToTerminal(`${pm} install bcrypt @types/bcrypt @prisma/client; ${pm} install typescript ts-node @types/node globals -D; ${pm} i -D prisma ; ${ex} prisma init --datasource-provider postgresql`);
+        const prismaPath = path.join(rootPath, '/prisma/schema.prisma');
         for (let i=0; i < 30; i++){
-          await sleep(1000)
+          await sleep(1000);
           if (fs.existsSync(prismaPath)){
             break;
           }
@@ -2940,9 +3037,9 @@ export async function activate(context: vscode.ExtensionContext) {
           // Construct absolute file path
           const schemaPath = path.join(workspaceFolder.uri.fsPath, '/prisma/schema.prisma');
           if (!fs.existsSync(schemaPath)){
-            fs.writeFileSync(schemaPath, '', 'utf8');
+            fs.writeFileSync(schemaPath, '', 'utf-8');
           }
-            fs.appendFileSync(schemaPath, schemaWhatToDo, 'utf8');
+            fs.appendFileSync(schemaPath, schemaWhatToDo, 'utf-8');
             // Create path for the file
             let uri = vscode.Uri.file(schemaPath);
             // Open in a new tab (beside current editor)
@@ -2953,9 +3050,10 @@ export async function activate(context: vscode.ExtensionContext) {
             
             const envPath = path.join(rootPath, '/.env');
             uri = vscode.Uri.file(envPath);
-            if (!fs.existsSync(envPath)){
-              fs.writeFileSync(envPath, envWhatToDo, 'utf8');
-            }
+    
+            const dblink = `DATABASE_URL=postgresql://${db_.owner}:${db_.password}@localhost:${db_.port}/${db_.name}?schema=public`;
+            fs.writeFileSync(envPath, dblink, 'utf-8');
+
             await vscode.window.showTextDocument(uri, { 
                 viewColumn: vscode.ViewColumn.Beside, // Opens beside active editor
                 preview: false // Optional: Force a new tab (not preview mode)
@@ -2975,7 +3073,66 @@ export async function activate(context: vscode.ExtensionContext) {
       }
       else if (msg.command === 'installPrismaPartTwo'){
         // vscode.window.showInformationMessage('Webview asked to install prisma part two');
-        sendToTerminal(`${ex} prisma migrate dev --name init; ${ex} prisma generate`);
+        // sendToTerminal(`${ex} prisma migrate dev --name init; ${ex} prisma generate`);
+        // if user did not supplied db_ details read them from .env if any
+        if (!(db_.name || db_.owner || db_.password)){
+          try{
+            const envPath = path.join(rootPath as string,'.env');
+            const connStr = fs.readFileSync(envPath, 'utf-8');
+            const m = connStr.match(/\/\/([^:]+):([^@]+)@([^/]+)\/([-a-zA-Z_0-9]+\??)/) as string[];
+            const db_:IStrKeyStrVal = {name:m[4], owner:m[1], password:m[2], host:m[3]};
+            // create .pgpass file with db credentials for db and owner as hostname:port:database:username:password
+            // if ( db_.name && db_.owner && db_.password ){
+            //   const content = 'localhost:'+ db_.port +':' + db_.name +':'+ db_.owner +':'+ db_.password;
+            //   fs.writeFileSync(pgPassPath, content, { 
+            //     encoding: 'utf-8',
+            //     mode: 0o600   // Very important for .pgpass! PostgreSQL requires 0600
+            //   });
+            // }
+          }catch(err){
+            const msg = err instanceof Error ? err.message : String(err);
+            vscode.window.showErrorMessage('Handling .pgpass permission err: '+ msg);
+          }
+        }
+        vscode.window.showErrorMessage('sendToTerminal all at once');
+        // sendToTerminal(`DBNAME=${db_.name}
+        // DBOWNER=${db_.owner}
+        // DBPASSWORD=${db_.password}
+        // SCHEMA_FILE="prisma/schema.prisma"
+        // echo "$DBNAME $DBOWNER $DBPASSWORD"
+        // `);
+        sendToTerminal(`psql -X -v ON_ERROR_STOP=1 <<'EOF'
+-- Create the role if it doesn't exist
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$DBOWNER') THEN
+    CREATE ROLE "$DBOWNER" LOGIN CREATEDB;
+  END IF;
+END
+\$\$;
+
+-- Change the role's password (optional, only if you want it to match DBPASSWORD)
+ALTER ROLE "$DBOWNER" WITH ENCRYPTED PASSWORD '$DBPASSWORD';
+
+-- Create the database if it doesn't exist, owned by $DBOWNER
+CREATE DATABASE "$DBNAME" OWNER "$DBOWNER" ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0;
+
+-- Connect to the new database and give the owner full rights (usually already true, but explicit)
+\\c "$DBNAME"
+GRANT ALL PRIVILEGES ON DATABASE "$DBNAME" TO "$DBOWNER";
+REVOKE CONNECT ON DATABASE "$DBNAME" FROM PUBLIC;        -- optional: disallow public connect
+GRANT CONNECT ON DATABASE "$DBNAME" TO "$DBOWNER";
+
+-- Give owner rights on the public schema and future objects
+GRANT ALL ON SCHEMA public TO "$DBOWNER";
+ALTER SCHEMA public OWNER TO "$DBOWNER";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "$DBOWNER";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "$DBOWNER";
+EOF`.replace(/"\$DBNAME"/g,`${db_.name}`)
+    .replace(/"\$DBOWNER"/g,`${db_.owner}`)
+    .replace(/"\$DBPASSWORD"/g,`${db_.password}`)
+);
+
         await sleep(10000);
         // childProcess.exec(command, (error, stdout, stderr) => {
         //   if(error){
@@ -2989,7 +3146,7 @@ export async function activate(context: vscode.ExtensionContext) {
         });
       }
       else if(msg.command==='readSchema'){
-        outputChannel.appendLine('HTML call to read schema '); outputChannel.show();
+        // outputChannel.appendLine('HTML call to read schema '); outputChannel.show();
         try {
 
           const prismaSchemaPath = path.join(rootPath as string, "prisma", "schema.prisma");
@@ -3026,16 +3183,17 @@ export async function activate(context: vscode.ExtensionContext) {
         }
       }
       else if (msg.command === 'createCrudSupport') {
-        outputChannel.appendLine('HTML call createCrudSupport'); outputChannel.show();
-        const {routeName, modelObjName, fields, embellishments } = msg.payload as {
+        // outputChannel.appendLine('HTML call createCrudSupport'); outputChannel.show();
+        const {routeName, modelObjName, fields, inputBoxWidth, embellishments } = msg.payload as {
           routeName: string;
           modelObjName: string;
           fields: string[];
+          inputBoxWidth: string,
           embellishments:string[];
         };
-        idIsNumeric_ = /id:\s*?(Int|Number)/i.test(fields.join(','));
+        inputBoxWidth_ = inputBoxWidth;
         const pageSveltePath = path.join(routesPath, routeName, '/+page.svelte');
-        outputChannel.appendLine('createCrudSupport entry point should we overwrite?'); outputChannel.show();
+        // outputChannel.appendLine('createCrudSupport fields: '+ JSON.stringify(fields)); outputChannel.show();
         if (fs.existsSync(pageSveltePath)){
           const answer = await vscode.window.showWarningMessage(
             `There is a route ${routeName}. To overwrite it?`,
@@ -3056,7 +3214,7 @@ export async function activate(context: vscode.ExtensionContext) {
         modelObjCName_ = modelObjName;  //[0].toUpperCase() + modelObjName.slice(1);
         fields_= fields.join().replace(/Int|int/g, 'number').replace(/:\s*?(\w+)/g, match => match.toLowerCase()).split(',');
         fields_ = sortArrByOrdered(fields_ as string[]) as string[];
-        outputChannel.appendLine('fields_: ' + JSON.stringify(fields_,null,2));outputChannel.show();
+        // outputChannel.appendLine('fields_: ' + JSON.stringify(fields_,null,2));outputChannel.show();
 
         embellishments_ = embellishments;
         // createUtils(routeName, fields);
@@ -3080,10 +3238,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
         // create accompanying +page.server.ts file
         const pageServerPath = path.join(routesPath, routeName_, '/+page.server.ts');
-        fs.writeFileSync(pageServerPath, getServerPage(), 'utf8');
+        fs.writeFileSync(pageServerPath, getServerPage(), 'utf-8');
         
         const hooksPath = path.join(rootPath, '/src/hooks.server.ts');
-        fs.writeFileSync(hooksPath, getHooksPage(), 'utf8');
+        fs.writeFileSync(hooksPath, getHooksPage(), 'utf-8');
 
         const exportDbPath = path.join(rootPath, '/src/lib/server/db.ts');
         fs.writeFileSync(exportDbPath, getPrismaClient());
@@ -3097,12 +3255,12 @@ export async function activate(context: vscode.ExtensionContext) {
         });
       }
       else if(msg.command === 'saveTypes'){
-        outputChannel.appendLine('HTML call '); outputChannel.show();
+        // outputChannel.appendLine('types '+ JSON.stringify(msg.payload.types,null,2)); outputChannel.show();
         const dbPath =  path.join(rootPath as string, '/src/lib/server/');
         if (!fs.existsSync(dbPath)) {
           fs.mkdirSync(dbPath, { recursive: true });
         }
-        // try{
+        try{
           const exportDbPath = path.join(dbPath, '/db.ts');
           if (!fs.existsSync(exportDbPath)){
             fs.writeFileSync(exportDbPath, `import { PrismaClient } from '@prisma/client';
@@ -3114,10 +3272,10 @@ export async function activate(context: vscode.ExtensionContext) {
   // log: ['query', 'info', 'warn', 'error']`
             );
           }
-        // }catch(err){
-        //   const msg = err instanceof Error ? err.message : String(err);
-        //   outputChannel.appendLine('createDBExportFile err: '+ msg);outputChannel.show();
-        // }
+        }catch(err){
+          const msg = err instanceof Error ? err.message : String(err);
+          outputChannel.appendLine('createDBExportFile err: '+ msg);outputChannel.show();
+        }
 
         // BEGINNING /src/lib/utils index.ts and helpers.ts
 
@@ -3138,8 +3296,8 @@ export async function activate(context: vscode.ExtensionContext) {
 `
   )}
 
-  
   // END /src/lib/utils index.ts and helpers.ts
+
   const appTypesPath = path.join(rootPath as string, '/src/lib/types/');
   if (!fs.existsSync(appTypesPath)) {
     fs.mkdirSync(appTypesPath, { recursive: true });
@@ -3159,13 +3317,13 @@ export async function activate(context: vscode.ExtensionContext) {
   // Copy this import to CRUD +page.svelte files
   // ${msg.payload.includeTypes}
 `;
-        // outputChannel.appendLine(getPartialTypes(types)); outputChannel.show();
+        // outputChannel.appendLine('lowercaseTypes'+ JSON.stringify(lowerCaseTypes)); outputChannel.show();
         let partialTypes = getPartialTypes(lowerCaseTypes);
         createSelectBlocks(partialTypes);
-        outputChannel.appendLine(partialTypes); outputChannel.show();
+        // outputChannel.appendLine(partialTypes); outputChannel.show();
         types += partialTypes;
         const appTypeFilePath = path.join(appTypesPath, 'types.ts');
-        fs.writeFileSync(appTypeFilePath, types, 'utf8');
+        fs.writeFileSync(appTypeFilePath, types, 'utf-8');
 
       }
       else if(msg.command === 'log'){
@@ -3189,7 +3347,8 @@ function getWebviewContent(
   webview: vscode.Webview, 
   extensionUri: vscode.Uri, 
   noPrismaSchema:boolean, 
-  installPartTwoPending:boolean
+  installPartTwoPending:boolean,
+  sudoName_:string
 ): string {
 
   // Enable scripts in the webview
@@ -3487,63 +3646,104 @@ function getWebviewContent(
     .hidden {
       display: none;
     }
+    .dbname-block {
+      display: grid;
+      grid-template-columns: repeat(3, 12rem);
+      column-gap: 0.2rem;
+      margin: 0;
+      padding: 0;
+
+      label {
+        width: 10rem;
+        padding: 0;
+        margin: 0 1rem 6px 0;
+      }
+
+      input {
+        width: 11rem;
+        margin: 0;
+        padding: 3px 0 3px 0.5rem !important;
+        border: 1px solid lightgray;
+        border-radius: 3px;
+
+        &:focus {
+          outline: 1px solid skyblue;
+        }
+      }
+    }
   </style>
 
 </head>
-
+<body>
 <div>
   <h2 style='margin-left:8rem;'>Create CRUD Support</h2>
 
   <pre id='installPartOneId' class='hidden'>
       <h3>Prisma Installation Part One</h3>
-The Extension Create CRUD Form Support found that Prisma ORM is not installed 
-in your project and it can help you install it. In this first part of the 
-installation it will add all the necessary packages and initiate Prisma in this 
+The Extension 'Create CRUD Form Support' found that Prisma ORM is not installed 
+in your project and it can help with installing it. In this the first part of the 
+installation it will add all the necessary packages and instantiate Prisma in this 
 project installing a very basic schema in /prisma/schema.prisma file at the project
-root and set a connection string in the .env file that it created.
-It will open schema.prisma and .env contents in separate windows and the Extension 
-will display Prisma Installation Part Two page having a continue button waiting
-for you to 
-  1)  Specify your Prisma models/tables replacing the current schema.prisma content
-  2)  Specify connection string in the opened .env with correct connection string
-When you are done select the continue button to finis the installation with the commands
-listed below. If you closed the Extension in order to finish the above tasks you could
-issue the commands yourself or start the Extension again and it should display the
-Prisma Installation Part Two page with the continue button.
+root.
 
-          pnpx prisma migrate dev --name init
-          // in case of a conflict with the previous migration history, run
-          pnpx prisma migrate reset
-          // and repeat
-          pnpx prisma migrate dev --name init
-          // and finally generate the Prisma client
-          pnpx prisma generate
-          <button id='installPartOneBtnId'>Install Prisma ORM</button><button id='cancelPartOneBtnId'>Cancel</button>
+  <div class="dbname-block">
+    <label for='dbNameId'>
+      Database Name
+      <br /><input id='dbNameId' type='text' placeholder='avoid dashes in name' />
+    </label>
+    <label for='dbOwnerId'>
+      Database Owner
+      <br /><input id='dbOwnerId' type='text' value="${sudoName_}"/>
+    </label>
+    <label for='dbOwnerPasswordId'>
+      Owner's Password
+      <br /><input id='dbOwnerPasswordId' type='password' />
+    </label>
+    <label for='dbPortId'>
+      Communication Port Id
+      <br /><input id='dbPortId' type='number' value='5432'/>
+    </label>
+  </div>
+
+  By specifying database name, database owner name and owner's password the Extension
+will set the database connection string in the .env file and install with no interaptions, 
+otherwise you should set it yourself and the process will ask for them latter on.
+  It will open schema.prisma and .env contents in separate windows and a continue button 
+waiting for you to 
+  1)  Specify your Prisma models/tables replacing the current schema.prisma content.
+  2)  Specify the connection string in the opened .env file if not set by the Extension.
+When you are done select the continue button to finish the installation.
+  If you would like to close the Extension in order to finish the above tasks you could
+after that restart the Extension again and it will display the commands that you should
+enter yourself or to select the continue button to allow the Extension to finish the 
+installation
+
+<button id='installPartOneBtnId'>Install Prisma ORM</button><button id='cancelPartOneBtnId'>Cancel</button>
   </pre>
 
   <pre id='installPartTwoId' class='hidden'>
           <h3>Prisma Installation Part Two</h3>
-We assume that you finished tasks 1) and 2)
+We assume that you finished below tasks
   1)  Ctrl + double-click on .env file to open it beside this Extension and
       enter valid connection string and save the file
   2)  Ctrl + double-click on /prisma/schema.prisma to open it beside the Extension
       and prepare schema models/tables
       Use model abilities for setting defaults, generating Ids,...
       Save the model.
-The extension  will issue the final commands for installing Prisma
-when you select continue, otherwise you can enter yourself the
-commands mentioned in the Prisma Installation Part One when 1) and 2)
-are finalized:
+Selecting the continue button the extension  will issue the final commands for installing 
+Prisma, otherwise you can enter yourself the following commands
 
-    pnpx prisma migrate dev --name init
-    // in case of a conflict with the previous migration history, run
-    pnpx prisma migrate reset
-    // and repeat
-    pnpx prisma migrate dev --name init
-    // and finally generate the Prisma client
-    pnpx prisma generate
+  sudo dropdb --if-exists -U "$DBOWNER" "$DBNAME" || true
+  sudo -u postgres psql -c "DROP DATABASE IF EXISTS $DBNAME;"
+  sudo -u postgres createdb "$DBNAME" -O "$DBOWNER"
+  sudo -u postgres psql -d "$DBNAME" -c "GRANT ALL ON SCHEMA public TO $DBOWNER; GRANT CONNECT ON DATABASE $DBNAME TO $DBOWNER;"
+  sudo -u postgres psql -d "$DBNAME" -c"GRANT ALL PRIVILEGES ON SCHEMA public TO $DBOWNER; ALTER SCHEMA public OWNER TO $DBOWNER; ALTER DATABASE dbtest OWNER TO $DBOWNER;"
+  sudo -u postgres psql -d "$DBNAME" -c"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $DBOWNER; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $DBOWNER;"
 
-              <button id='installPartTwoBtnId'>continue</button><button id='cancelPartTwoBtnId'>cancel</button>  
+  pnpx prisma migrate dev --name init		# create first migration (when ready)"
+  pnpx prisma generate
+
+  <button id='installPartTwoBtnId' style='margin-left:14rem;'>continue</button><button id='cancelPartTwoBtnId'>cancel</button>  
   </pre>
 
   <div id='crudUIBlockId' class='main-grid hidden'>
@@ -3577,6 +3777,10 @@ created in the route specified in the Route Name input box.
       </div>
 
 
+      <div style='display:flex;height:1.4re !important;margin:0;padding:0;'>
+        <input id="inputBoxWidthId" type="text" value='16rem' style='margin:0 1rem 0 0; padding:0 0 0 1rem;width:7rem;height:1.4rem !important;line-height:1.1rem;display:inline-block;' placeholder='CSS px, rem, ...'/>
+        <label for="CRInput" style='display:inline-block;width:max-content'>All input boxes CSS width</label>
+      </div>
       <div class="embellishments">
         <div class="checkbox-item">
           <input id="CRInput" type="checkbox" checked />
@@ -3607,7 +3811,7 @@ created in the route specified in the Route Name input box.
     </div>
   </div>
 </div>
-<body>
+</body>
 <script>
   // Webview Extension
   let tablesModel = 'waiting for schemaModels '
@@ -3628,26 +3832,27 @@ created in the route specified in the Route Name input box.
   }
   // all the elements needed to handle Prisma installation two parts
   // and the main CRUD support UI
-  let installPartOneEl
-  let installPartTwoEl
-  let installPartOneBtnEl
-  let cancelPartOneBtnEl
-  let installPartTwoBtnEl
-  let cancelPartTwoBtnEl
-  let crudUIBlockEl
-  let rightColumnEl
-  let schemaContainerEl
-  let crudSupportDoneEl
-  let fieldModelsJSON
-  let fieldModels
+  let installPartOneEl;
+  let installPartTwoEl;
+  let installPartOneBtnEl;
+  let cancelPartOneBtnEl;
+  let installPartTwoBtnEl;
+  let cancelPartTwoBtnEl;
+  let crudUIBlockEl;
+  let rightColumnEl;
+  let schemaContainerEl;
+  let crudSupportDoneEl;
+  let fieldModelsJSON;
+  let fieldModels;
   let theFields = [];
-  let msgEl
-  let labelEl
-  let routeName = ''
-  let modelObjName = ''
-  let routeLabelNode
-  let timer
-  let noRemoveHint = false
+  let msgEl;
+  let labelEl;
+  let routeName = '';
+  let modelObjName = '';
+  let routeLabelNode;
+  let timer;
+  let noRemoveHint = false;
+  let inputBoxWidthEl;
 
   // Fires only one time
   // based on two variables noPrismaSchemaL and installPartTwoPending
@@ -3667,6 +3872,7 @@ created in the route specified in the Route Name input box.
     schemaContainerEl = document.getElementById('schemaContainerId')
     crudSupportDoneEl = document.querySelector('.crud-support-done')
     labelEl = document.querySelector("label[for='routeNameId']");
+    inputBoxWidthEl = document.getElementById('inputBoxWidthId');
     routeLabelNode = Array.from(labelEl.childNodes).filter(
       (node) => node.nodeType === Node.TEXT_NODE
       )[0];
@@ -3678,7 +3884,20 @@ created in the route specified in the Route Name input box.
 
     if (noPrismaSchemaL){
       installPartOneBtnEl.addEventListener('click', () => {
-        vscode.postMessage({ command: 'installPrisma' })
+      // vscode.postMessage({ command: 'log', text: 'InstallPartOneBtn clicked' })
+        // get dbname, owner and owner password if specified
+        try{
+          const db = {};
+          db.name = document.getElementById('dbNameId').value;
+          db.owner = document.getElementById('dbOwnerId').value;
+          db.password = document.getElementById('dbOwnerPasswordId').value;
+          db.port = document.getElementById('dbPortId').value;
+          vscode.postMessage({ command: 'setDbAndOwner', payload: db });
+        }catch(err){
+          const msg = err instanceof Error ? err.message : String(err);
+          vscode.postMessage({ command: 'log', text: 'get db err '+ msg })
+        }
+        vscode.postMessage({ command: 'installPrismaPartOne' })
         installPartOneBtnEl.innerText = 'installing...'
       })
       cancelPartOneBtnEl.addEventListener('click', cancelAnyPart)
@@ -3846,25 +4065,6 @@ created in the route specified in the Route Name input box.
   // entries to be destructed into individual object properties
   function renderParsedSchema(schemaModels) {
 
-    // function addFieldnameToCandidateList(el){
-    //   const fieldName = el.innerText
-    //   vscode.postMessage({command:'log', text: fieldName})
-    //   // let type = el.nextSibling.innerText.match(/type:\\s*(\\w+)/)?.[1];
-    //   let type = dateTimeToDate(el.nextSibling.innerText.match(/type:(\\S+)/)?.[1])
-    //   if (!'String|Number|Boolean|Role'.includes(type)) {
-    //     return
-    //   }
-
-    //   // the standard procedure for entering a new fieldname is via input box + Enter
-    //   if (el.tagName === 'P' && el.nextSibling.tagName === 'P' && !fields.includes(fieldName)) {
-    //     // keep inputbox value so preserve it if any and restore it after
-    //     const savedEntry = fieldNameEl.value
-    //     fieldNameEl.value = \`\${fieldName}: \${type}\`
-    //     fieldNameEl.dispatchEvent(enterKeyEvent)
-    //     fieldNameEl.value = savedEntry
-    //   }
-    // }
-
     let markup = ''
     let types = ''
     let includeTypes = 'import type { '
@@ -3942,6 +4142,7 @@ created in the route specified in the Route Name input box.
                 fieldNameEl.value = field;
                 fieldNameEl.dispatchEvent(enterKeyEvent);
               }
+              msgEl.innerHTML += '<pre>fields<br/>'+ JSON.stringify(fields,null,2) + '</pre>';
               return
             }
           }catch(err){
@@ -4138,8 +4339,9 @@ created in the route specified in the Route Name input box.
   createBtnEl.addEventListener('click', (event) => {
     noRemoveHint = true
     if (routeName && fields.length) {
+      const inputBoxWidth = inputBoxWidthEl.value ?? '16rem';
       document.querySelector('.crud-support-done').innerHTML = "route <span style='color:pink;'>" + routeNameEl.value + "</span>  created";
-      const payload = { routeName, modelObjName, fields, embellishments: selectedCheckboxes() }
+      const payload = { routeName, modelObjName, fields, inputBoxWidth, embellishments: selectedCheckboxes() }
       vscode.postMessage({ command: 'createCrudSupport', payload: payload })
     }
   })
