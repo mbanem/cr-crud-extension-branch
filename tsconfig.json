@@ -3,7 +3,7 @@
     "module": "commonjs", //"Node16",
     "target": "ES2022",
     "outDir": "out",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     "sourceMap": true,
     "rootDir": "src",
     "esModuleInterop": true,
